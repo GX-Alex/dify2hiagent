@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.hiagent.yaml
+*.hiagent.report.md
+.DS_Store

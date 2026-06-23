@@ -10,9 +10,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-
 TYPE_MAP = {
     "string": 0,
     "paragraph": 0,
@@ -45,7 +42,19 @@ def convert_template(text: str) -> str:
     return re.sub(r"\{\{#([A-Za-z0-9_-]+)\.([A-Za-z0-9_.*\[\]-]+)#\}\}", r"{{\1_\2}}", text or "")
 
 
+def import_yaml():
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Missing dependency: PyYAML. Install with `python3 -m pip install -r requirements.txt` "
+            "or `python3 -m pip install PyYAML`."
+        ) from exc
+    return yaml
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
+    yaml = import_yaml()
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -363,18 +372,20 @@ def convert(
     return hiagent, report
 
 
-class LiteralDumper(yaml.SafeDumper):
-    def ignore_aliases(self, data: Any) -> bool:
-        return True
+def dump_yaml(data: dict[str, Any]) -> str:
+    yaml = import_yaml()
 
+    class LiteralDumper(yaml.SafeDumper):
+        def ignore_aliases(self, data: Any) -> bool:
+            return True
 
-def str_representer(dumper: yaml.SafeDumper, data: str) -> yaml.nodes.ScalarNode:
-    if "\n" in data:
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+    def str_representer(dumper, value: str):
+        if "\n" in value:
+            return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|")
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value)
 
-
-LiteralDumper.add_representer(str, str_representer)
+    LiteralDumper.add_representer(str, str_representer)
+    return yaml.dump(data, Dumper=LiteralDumper, allow_unicode=True, sort_keys=False, width=120)
 
 
 def write_report(path: Path, hiagent: dict[str, Any], report: list[str]) -> None:
@@ -423,10 +434,7 @@ def main() -> None:
     hiagent, report = convert(dify, template, args.model_id, args.model_name)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        yaml.dump(hiagent, Dumper=LiteralDumper, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
-    )
+    args.output.write_text(dump_yaml(hiagent), encoding="utf-8")
     write_report(args.report, hiagent, report)
     print(json.dumps({"output": str(args.output), "report": str(args.report), "nodes": len(hiagent["Nodes"])}, ensure_ascii=False))
 

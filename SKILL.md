@@ -5,7 +5,7 @@ description: Convert Dify workflow export YAML files into HiAgent workflow YAML 
 
 # Dify to HiAgent
 
-Use this skill to convert Dify workflow exports into HiAgent-importable workflow YAML and to debug import/runtime errors from the converted workflows.
+Use this skill to convert Dify workflow exports into HiAgent-importable workflow YAML and to debug import/runtime errors from the converted workflows. This repository also works as a standalone CLI project for Claude Code, OpenCode, Hermes, OpenClaw, and other AI coding tools; those tools should read `README.md` and `AGENTS.md`.
 
 ## Workflow
 
