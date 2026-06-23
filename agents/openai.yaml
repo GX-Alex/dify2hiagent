@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dify to HiAgent"
+  short_description: "Convert Dify workflow exports into HiAgent workflow YAML."
+  default_prompt: "Convert this Dify workflow export into a HiAgent-importable workflow YAML."
