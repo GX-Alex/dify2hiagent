@@ -11,7 +11,21 @@
 | `knowledge-retrieval` | `Knowledge` | Use `QueryVariable`; knowledge resources must be rebound in HiAgent. |
 | `if-else` | `Condition` | Needs explicit branch mapping; implement after seeing a HiAgent Condition export. |
 | `tool` | `Tool` | Requires a matching HiAgent tool/plugin ID in the target workspace; known plugin mappings are copied from a HiAgent template. |
+| `assigner` | `Code` | Reproduce variable assignment logic in a HiAgent Code node and expose assigned variables as node outputs. |
 | `http-request` | `Http` | Map method, URL, headers/body/auth when present. |
+
+## Assigner / Variable Assignment
+
+Dify `assigner` nodes are variable assignment nodes. Convert them to HiAgent `Code` nodes instead of placeholders:
+
+- Target `conversation.<name>` becomes a Code output field named `<name>`.
+- `input_type: variable` becomes an `InputVariables` reference; `conversation.<name>` references resolve to the nearest upstream assigner output when available.
+- Constant values are embedded in the generated Code node.
+- Supported operations include `over-write` / `overwrite` / `set`, `append`, `extend` / `concat`, and `clear` / `reset`; unknown operations fall back to overwrite semantics.
+- After conversion, downstream references such as `{{#conversation.final_report#}}` should bind to the nearest upstream assigner Code node output path, for example `Path: final_report`.
+- Any `NodeCode` discovered in `InputVariables` is also added to the node `Depends` list so HiAgent execution order follows the data dependency.
+
+This reproduces in-run variable propagation. If a Dify workflow relies on cross-turn persisted conversation variables, review the imported HiAgent workflow against the platform's native memory/session features.
 
 ## Plugin And Tool Mapping
 

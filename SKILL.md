@@ -61,6 +61,10 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
 
 Read [references/mapping.md](references/mapping.md) for the field mapping and known pitfalls.
 
+## Assigner Nodes
+
+Dify `assigner` is a variable assignment node. Convert it to a HiAgent Code node that returns the assigned variable names as outputs, then resolve downstream `conversation.*` references to the nearest upstream assigner output. This preserves normal in-run data flow; cross-turn conversation persistence still needs HiAgent-native review.
+
 ## Plugin Nodes
 
 When the source workflow has Dify document extraction or tool nodes, pass a HiAgent template that already contains the target plugin nodes. Known mappings include `document-extractor` -> `convert_to_markdown`, `markdown_to_docx_converter` -> `md_to_docx`, plus direct mappings for `browser_basic` and `QuerySQLDatabase` when the template has those tools. See [references/mapping.md](references/mapping.md) for parameter and output paths.

@@ -36,6 +36,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 - Keep Codex skill files valid: `SKILL.md`, `agents/openai.yaml`, `references/`, and `scripts/`.
 - Keep the CLI standalone for non-Codex agents.
 - Do not manually edit generated HiAgent YAML unless debugging; prefer improving the converter.
+- Convert Dify `assigner` nodes to Code nodes that output assigned variables and resolve downstream `conversation.*` references to the nearest upstream assigner output.
 - Known plugin mappings include `document-extractor` -> `convert_to_markdown`, `markdown_to_docx_converter` -> `md_to_docx`, and direct tool-name mappings for `browser_basic` / `QuerySQLDatabase` when present in the HiAgent template.
 - Do not overfit Knowledge output schemas before seeing actual HiAgent runtime output.
 - Do not commit workflow exports that may contain private business data unless explicitly requested.

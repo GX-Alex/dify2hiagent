@@ -143,6 +143,8 @@ def map_selector(
     code_map: dict[str, str],
     type_map: dict[str, str],
     start_var_types: dict[str, str] | None = None,
+    conversation_refs: dict[tuple[str, str], dict[str, Any]] | None = None,
+    current_node_id: str | None = None,
 ) -> dict[str, Any]:
     selector = selector or []
     if not selector:
@@ -150,6 +152,11 @@ def map_selector(
 
     source = str(selector[0])
     path = ".".join(str(x) for x in selector[1:]) if len(selector) > 1 else ""
+    if source == "conversation":
+        resolved = (conversation_refs or {}).get((str(current_node_id), path))
+        if resolved:
+            return copy.deepcopy(resolved)
+        return {"Path": path, "RefType": "node_field"}
     if source in code_map:
         source_type = type_map.get(source)
         if source_type == "llm" and path == "text":
@@ -194,6 +201,129 @@ def parse_dify_template_ref(value: Any) -> list[str] | None:
     return [match.group(1), match.group(2)]
 
 
+def assigner_output_names(node: dict[str, Any]) -> set[str]:
+    names = set()
+    data = node.get("data") or {}
+    if data.get("type") != "assigner":
+        return names
+    for item in data.get("items") or []:
+        target = item.get("variable_selector") or []
+        if len(target) >= 2 and str(target[0]) == "conversation":
+            names.add(str(target[-1]))
+    return names
+
+
+def build_conversation_refs(
+    nodes: list[dict[str, Any]],
+    parents: dict[str, list[str]],
+    code_map: dict[str, str],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    assigner_outputs = {str(node["id"]): assigner_output_names(node) for node in nodes}
+    variables = {name for names in assigner_outputs.values() for name in names}
+    refs: dict[tuple[str, str], dict[str, Any]] = {}
+    for node in nodes:
+        node_id = str(node["id"])
+        queue = [(parent, 1) for parent in parents.get(node_id, [])]
+        seen: set[str] = set()
+        distances: dict[str, int] = {}
+        while queue:
+            parent_id, distance = queue.pop(0)
+            parent_id = str(parent_id)
+            if parent_id in seen:
+                continue
+            seen.add(parent_id)
+            distances[parent_id] = distance
+            for grandparent in parents.get(parent_id, []):
+                queue.append((grandparent, distance + 1))
+        for variable in variables:
+            candidates = [
+                (distance, parent_id)
+                for parent_id, distance in distances.items()
+                if variable in assigner_outputs.get(parent_id, set())
+            ]
+            if candidates:
+                _, source_id = min(candidates, key=lambda item: item[0])
+                refs[(node_id, variable)] = {
+                    "NodeCode": code_map[source_id],
+                    "Path": variable,
+                    "RefType": "node_field",
+                }
+    return refs
+
+
+def infer_hi_type_from_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return 2
+    if isinstance(value, int) and not isinstance(value, bool):
+        return 1
+    if isinstance(value, float):
+        return 3
+    if isinstance(value, dict):
+        return 4
+    if isinstance(value, list):
+        if all(isinstance(item, str) for item in value):
+            return 5
+        if all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value):
+            return 8
+        return 9
+    return 0
+
+
+def unique_input_name(base: str, used: set[str]) -> str:
+    name = re.sub(r"[^0-9A-Za-z_]", "_", base).strip("_") or "value"
+    candidate = name
+    index = 2
+    while candidate in used:
+        candidate = f"{name}_{index}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def build_assigner_code(assignments: list[dict[str, Any]]) -> str:
+    lines = [
+        "# Dify assigner 节点转换：复现变量赋值逻辑，并将赋值结果作为本节点输出传递给下游。",
+        "def _append_value(current, value):",
+        "    if isinstance(current, list):",
+        "        return current + value if isinstance(value, list) else current + [value]",
+        "    if current is None:",
+        "        return value",
+        "    if isinstance(current, str):",
+        "        return current + ('' if value is None else str(value))",
+        "    return [current] + value if isinstance(value, list) else [current, value]",
+        "",
+        "def _extend_value(current, value):",
+        "    if isinstance(current, list):",
+        "        return current + value if isinstance(value, list) else current + [value]",
+        "    if isinstance(current, str):",
+        "        return current + ('' if value is None else str(value))",
+        "    return value if current is None else _append_value(current, value)",
+        "",
+        "def _apply_assign(operation, current, value):",
+        "    op = str(operation or 'over-write').lower().replace('_', '-')",
+        "    if op in ('over-write', 'overwrite', 'set', 'assign'):",
+        "        return value",
+        "    if op in ('append', 'append-item'):",
+        "        return _append_value(current, value)",
+        "    if op in ('extend', 'concat'):",
+        "        return _extend_value(current, value)",
+        "    if op in ('clear', 'reset'):",
+        "        return None",
+        "    return value",
+        "",
+        "def handler(params):",
+        "    result = {}",
+    ]
+    for item in assignments:
+        output_name = item["output_name"]
+        operation = item["operation"]
+        value_expr = item["value_expr"]
+        current_expr = item["current_expr"]
+        lines.append(f"    result[{output_name!r}] = _apply_assign({operation!r}, {current_expr}, {value_expr})")
+    lines.extend(["    return result", ""])
+    return "\n".join(lines)
+
+
 def schema_from_outputs(outputs: dict[str, Any] | None) -> list[dict[str, Any]]:
     schema = []
     for name, spec in (outputs or {}).items():
@@ -229,6 +359,9 @@ def llm_prompt_configs(
     data: dict[str, Any],
     code_map: dict[str, str],
     type_map: dict[str, str],
+    start_var_types: dict[str, str] | None = None,
+    conversation_refs: dict[tuple[str, str], dict[str, Any]] | None = None,
+    current_node_id: str | None = None,
 ) -> tuple[Any, Any, list[dict[str, Any]]]:
     prompts = data.get("prompt_template") or []
     system_prompt = "\n\n".join(convert_template(p.get("text", "")) for p in prompts if p.get("role") == "system")
@@ -238,7 +371,7 @@ def llm_prompt_configs(
     original_prompt_text = "\n".join(p.get("text", "") for p in prompts)
     for match in re.finditer(r"\{\{#([A-Za-z0-9_-]+)\.([A-Za-z0-9_.*\[\]-]+)#\}\}", original_prompt_text):
         source, path = match.group(1), match.group(2)
-        mapped = map_selector([source, path], code_map, type_map, {})
+        mapped = map_selector([source, path], code_map, type_map, start_var_types, conversation_refs, current_node_id)
         mapped["Name"] = f"{source}_{path}"
         prompt_variables.append(mapped)
 
@@ -309,6 +442,32 @@ def parent_ref_for_path(hi_node: dict[str, Any], path: str) -> dict[str, Any] | 
     return None
 
 
+def add_depends_from_node_refs(hi_node: dict[str, Any]) -> None:
+    depends = []
+    seen = set()
+    for dep in hi_node.get("Depends") or []:
+        code = dep.get("NodeCode")
+        if code and code != hi_node.get("Code") and code not in seen:
+            depends.append({"NodeCode": code})
+            seen.add(code)
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            code = value.get("NodeCode")
+            if value.get("RefType") == "node_field" and code and code != hi_node.get("Code") and code not in seen:
+                depends.append({"NodeCode": code})
+                seen.add(code)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(hi_node.get("Configs"))
+    if depends:
+        hi_node["Depends"] = depends
+
+
 def build_tool_node(
     hi_node: dict[str, Any],
     tool_cfg: dict[str, Any],
@@ -351,6 +510,7 @@ def convert(
     type_map = {str(node["id"]): node["data"]["type"] for node in nodes}
     start_node = next((node for node in nodes if node["data"].get("type") == "start"), None)
     start_var_types = {var.get("variable", ""): var.get("type", "") for var in ((start_node or {}).get("data") or {}).get("variables", [])}
+    conversation_refs = build_conversation_refs(nodes, parents, code_map)
     report: list[str] = []
 
     template = template or {}
@@ -422,7 +582,7 @@ def convert(
             inputs = []
             for output in data.get("outputs", []):
                 selector = output.get("value_selector") or []
-                mapped = map_selector(selector, code_map, type_map, start_var_types)
+                mapped = map_selector(selector, code_map, type_map, start_var_types, conversation_refs, node_id)
                 mapped["Name"] = output.get("variable", "")
                 inputs.append(mapped)
             hi_node["Type"] = "End"
@@ -431,14 +591,14 @@ def convert(
 
         elif dify_type == "llm":
             params = ((data.get("model") or {}).get("completion_params") or {})
-            system_prompt, prompt, prompt_vars = llm_prompt_configs(data, code_map, type_map)
+            system_prompt, prompt, prompt_vars = llm_prompt_configs(data, code_map, type_map, start_var_types, conversation_refs, node_id)
             input_vars = []
             seen = set()
             for var in data.get("variables") or []:
                 name = var.get("variable")
                 if not name:
                     continue
-                mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types)
+                mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types, conversation_refs, node_id)
                 mapped["Name"] = name
                 input_vars.append(mapped)
                 seen.add(name)
@@ -479,7 +639,7 @@ def convert(
         elif dify_type == "code":
             input_vars = []
             for var in data.get("variables") or []:
-                mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types)
+                mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types, conversation_refs, node_id)
                 mapped["Name"] = var.get("variable", "")
                 input_vars.append(mapped)
             hi_node["Type"] = "Code"
@@ -496,34 +656,55 @@ def convert(
             input_vars = []
             output_schema = []
             assignments = []
+            used_input_names: set[str] = set()
             for index, item in enumerate(data.get("items") or [], 1):
                 target = item.get("variable_selector") or []
                 output_name = str(target[-1]) if target else f"value_{index}"
-                value_selector = item.get("value") if item.get("input_type") == "variable" else None
-                input_name = f"input_{output_name}"
-                mapped = map_selector(value_selector, code_map, type_map, start_var_types) if value_selector else {"RefType": "node_field"}
-                mapped["Name"] = input_name
-                input_vars.append(mapped)
-                output_schema.append({"Name": output_name, "Type": 0})
-                assignments.append((output_name, input_name))
-            lines = [
-                "# Dify assigner 节点转换为透传 Code 节点。",
-                "def handler(params):",
-                "    return {",
-            ]
-            for output_name, input_name in assignments:
-                lines.append(f"        {output_name!r}: params.get({input_name!r}),")
-            lines.extend(["    }", ""])
+                operation = item.get("operation") or item.get("write_mode") or "over-write"
+                value_expr = "None"
+                current_expr = "None"
+                output_type = 0
+
+                if str(operation).lower().replace("_", "-") not in {"over-write", "overwrite", "set", "assign", "clear", "reset"}:
+                    current_name = unique_input_name(f"current_{output_name}", used_input_names)
+                    current_selector = item.get("variable_selector") or []
+                    current_mapped = map_selector(current_selector, code_map, type_map, start_var_types, conversation_refs, node_id)
+                    current_mapped["Name"] = current_name
+                    input_vars.append(current_mapped)
+                    current_expr = f"params.get({current_name!r})"
+
+                if item.get("input_type") == "variable":
+                    value_selector = item.get("value") or []
+                    value_name = unique_input_name(f"value_{output_name}", used_input_names)
+                    mapped = map_selector(value_selector, code_map, type_map, start_var_types, conversation_refs, node_id) if value_selector else {"RefType": "node_field"}
+                    mapped["Name"] = value_name
+                    input_vars.append(mapped)
+                    value_expr = f"params.get({value_name!r})"
+                elif str(operation).lower().replace("_", "-") in {"clear", "reset"}:
+                    value_expr = "None"
+                else:
+                    value = item.get("value")
+                    output_type = infer_hi_type_from_value(value)
+                    value_expr = repr(value)
+
+                output_schema.append({"Name": output_name, "Type": output_type})
+                assignments.append({
+                    "output_name": output_name,
+                    "operation": operation,
+                    "current_expr": current_expr,
+                    "value_expr": value_expr,
+                })
+
             hi_node["Type"] = "Code"
             hi_node["Configs"]["Code"] = {
-                "Code": "\n".join(lines),
+                "Code": build_assigner_code(assignments),
                 "InputVariables": input_vars,
                 "Language": 1,
                 "OutputSchema": output_schema or [{"Name": "output", "Type": 0}],
                 "Retries": 0,
                 "TimeoutSeconds": 120,
             }
-            report.append(f"变量赋值节点「{hi_node['Name']}」已转换为透传 Code 节点；如需 HiAgent 会话变量语义，请导入后复核。")
+            report.append(f"变量赋值节点「{hi_node['Name']}」已转换为复现赋值逻辑的 Code 节点，并以节点输出传递给下游。")
 
         elif dify_type == "document-extractor":
             tool_cfg = tool_catalog.get("convert_to_markdown")
@@ -564,7 +745,7 @@ def convert(
                     if selector and selector[0] == "conversation":
                         mapped = parent_ref_for_path(hi_node, selector[1]) or {"Path": selector[1], "RefType": "node_field"}
                     else:
-                        mapped = map_selector(selector, code_map, type_map, start_var_types) if selector else {"RefType": "node_field"}
+                        mapped = map_selector(selector, code_map, type_map, start_var_types, conversation_refs, node_id) if selector else {"RefType": "node_field"}
                     mapped["Name"] = hi_param
                     input_variables.append(mapped)
                 hi_node = build_tool_node(hi_node, tool_cfg, input_variables, template, hiagent)
@@ -587,7 +768,7 @@ def convert(
 
         elif dify_type == "knowledge-retrieval":
             config = data.get("multiple_retrieval_config") or {}
-            query_variable = map_selector(data.get("query_variable_selector"), code_map, type_map, start_var_types)
+            query_variable = map_selector(data.get("query_variable_selector"), code_map, type_map, start_var_types, conversation_refs, node_id)
             query_variable["Name"] = "query"
             score = config.get("score_threshold")
             hi_node["Type"] = "Knowledge"
@@ -622,6 +803,7 @@ def convert(
             }
             report.append(f"节点「{hi_node['Name']}」类型 {dify_type} 未自动支持，已转为占位 Code 节点。")
 
+        add_depends_from_node_refs(hi_node)
         hiagent["Nodes"].append(hi_node)
 
     if not any(node.get("Type") == "End" for node in hiagent["Nodes"]):
