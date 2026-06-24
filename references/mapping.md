@@ -10,8 +10,23 @@
 | `code` | `Code` | Wrap with `handler(params)` and rename Dify `main` to `dify_main`. |
 | `knowledge-retrieval` | `Knowledge` | Use `QueryVariable`; knowledge resources must be rebound in HiAgent. |
 | `if-else` | `Condition` | Needs explicit branch mapping; implement after seeing a HiAgent Condition export. |
-| `tool` | `Tool` | Requires a matching HiAgent tool/plugin ID in the target workspace. |
+| `tool` | `Tool` | Requires a matching HiAgent tool/plugin ID in the target workspace; known plugin mappings are copied from a HiAgent template. |
 | `http-request` | `Http` | Map method, URL, headers/body/auth when present. |
+
+## Plugin And Tool Mapping
+
+Pass a HiAgent export template that contains plugin Tool nodes when converting Dify workflows with document extraction or tool calls. The converter builds a Tool catalog from template `Nodes` and copies matching `Depends.ToolMap` / `Depends.PluginMap` entries into the generated workflow.
+
+| Dify node/tool | HiAgent ToolName | Parameter mapping | Output mapping / notes |
+| --- | --- | --- | --- |
+| `document-extractor` | `convert_to_markdown` | Dify `variable_selector` file URL -> `uri` | Dify `text` references map to `content[0].text`; if the Dify input is `file-list`, use the first file URL as `<variable>[0].url` because observed HiAgent plugin input accepts one `uri`. |
+| `tool_name: markdown_to_docx_converter` | `md_to_docx` | `markdown_content` -> `md_text`; `title` -> `output_filename` | Dify `files` references map to `content[0].files`; HiAgent also exposes `structuredContent.filepath` and `structuredContent.name`. |
+| `tool_name: md_to_docx` | `md_to_docx` | `md_text` -> `md_text`; `output_filename` -> `output_filename` | Use when Dify already names the tool like HiAgent. |
+| `tool_name: convert_to_markdown` | `convert_to_markdown` | `uri` -> `uri` | Direct tool-name match. |
+| `tool_name: browser_basic` | `browser_basic` | `url` -> `url`; `full_page_ocr` -> `full_page_ocr` | Requires the Browser plugin node in the template. |
+| `tool_name: QuerySQLDatabase` | `QuerySQLDatabase` | `dsn` -> `dsn`; `query` -> `query` | Requires the SQL plugin node in the template. |
+
+Dify `conversation.*` variables do not exist as a HiAgent global conversation store. For common Dify assigner patterns, convert `assigner` to a pass-through Code node and bind downstream tool inputs to that node's output path. Review this after import if the original workflow relies on persistent conversation semantics.
 
 ## Type Mapping
 

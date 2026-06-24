@@ -10,11 +10,12 @@
 
 - 读取 Dify `*.workflow.yml` 导出文件。
 - 生成 HiAgent `DLVersion: v2` 工作流 YAML。
-- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`。
+- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`、文档提取和部分插件工具。
 - 保留 LLM `Prompt` / `SystemPrompt`。
 - 将 Dify Code 节点包装为 HiAgent 可运行的 `handler(params)`。
 - 自动规避 HiAgent 沙箱注入 `main()` 导致的函数名冲突。
 - 生成转换报告，标记需要导入后人工绑定的模型、知识库、工具等资源。
+- 从 HiAgent 插件模版复制 `ToolMap` / `PluginMap`，支持 `convert_to_markdown`、`md_to_docx`、`browser_basic`、`QuerySQLDatabase` 等已知工具映射。
 
 ### 目录结构
 
@@ -80,7 +81,8 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 ### 已知边界
 
 - Dify 知识库 ID、插件 ID、工具 ID 不能直接转换为 HiAgent 工作空间资源，需要导入后重新绑定。
-- `if-else`、复杂工具节点、HTTP 复杂鉴权等需要结合真实 HiAgent 导出样例继续补映射。
+- `if-else`、复杂分支和 HTTP 复杂鉴权等需要结合真实 HiAgent 导出样例继续补映射。
+- Dify `file-list` 文档提取当前按 HiAgent 插件输入约束默认取首个文件 URL。
 - Knowledge 返回结构不要过早过度适配；应先看运行时输出和下游 Code 节点实际读取字段。
 
 ## English
@@ -91,11 +93,12 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 
 - Reads Dify `*.workflow.yml` exports.
 - Generates HiAgent `DLVersion: v2` workflow YAML.
-- Maps common nodes: `Start`, `End`, `LLM`, `Code`, and `Knowledge`.
+- Maps common nodes: `Start`, `End`, `LLM`, `Code`, `Knowledge`, document extraction, and selected plugin tools.
 - Preserves LLM `Prompt` and `SystemPrompt`.
 - Wraps Dify Code nodes with HiAgent-compatible `handler(params)`.
 - Avoids HiAgent sandbox `main()` name collisions by renaming Dify business functions to `dify_main(...)`.
 - Writes a conversion report with resources that must be rebound after import.
+- Copies `ToolMap` / `PluginMap` entries from a HiAgent plugin template for known tools such as `convert_to_markdown`, `md_to_docx`, `browser_basic`, and `QuerySQLDatabase`.
 
 ### Install
 
@@ -147,5 +150,6 @@ Before handing off a converted workflow:
 ### Known Limits
 
 - Dify knowledge base IDs, plugin IDs, and tool IDs cannot be directly migrated into HiAgent workspace resources. Rebind them after import.
-- `if-else`, complex tool nodes, and advanced HTTP auth need additional mapping based on real HiAgent exports.
+- `if-else`, complex branch logic, and advanced HTTP auth need additional mapping based on real HiAgent exports.
+- Dify `file-list` document extraction currently uses the first file URL to fit the observed HiAgent plugin `uri` input.
 - Do not overfit Knowledge output schemas until runtime output and downstream Code reads prove a mismatch.

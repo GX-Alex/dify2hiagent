@@ -22,6 +22,7 @@ Use this skill to convert Dify workflow exports into HiAgent-importable workflow
    - `Type: Start` has `Name: Start`; `Type: End` has `Name: End`.
    - Python Code nodes compile.
    - Code nodes use `dify_main(...)` plus `handler(params)`, not `main(...)`.
+   - Plugin Tool nodes copied from a HiAgent template include the matching `ToolMap` / `PluginMap` dependencies.
 5. Ask the user to import into HiAgent and report the exact import/runtime error.
 6. Patch the converter, regenerate the YAML, and rerun the static checks.
 
@@ -49,7 +50,7 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
 ## Required HiAgent Details
 
 - `DLVersion: v2`
-- Top-level `Depends` contains resource maps such as `ModelMap`, `KnowledgeMap`, `ToolMap`.
+- Top-level `Depends` contains resource maps such as `ModelMap`, `KnowledgeMap`, `ToolMap`, and `PluginMap`.
 - Nodes are a flat `Nodes` list.
 - Edges are expressed as per-node `Depends: [{NodeCode: ...}]`.
 - Node references use `NodeCode`, `Path`, `RefType: node_field`.
@@ -59,6 +60,10 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
   - `Type: End` must have `Name: End`.
 
 Read [references/mapping.md](references/mapping.md) for the field mapping and known pitfalls.
+
+## Plugin Nodes
+
+When the source workflow has Dify document extraction or tool nodes, pass a HiAgent template that already contains the target plugin nodes. Known mappings include `document-extractor` -> `convert_to_markdown`, `markdown_to_docx_converter` -> `md_to_docx`, plus direct mappings for `browser_basic` and `QuerySQLDatabase` when the template has those tools. See [references/mapping.md](references/mapping.md) for parameter and output paths.
 
 ## Code Node Pitfalls
 
