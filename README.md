@@ -10,13 +10,14 @@
 
 - 读取 Dify `*.workflow.yml` 导出文件。
 - 生成 HiAgent `DLVersion: v2` 工作流 YAML。
-- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`、变量赋值、文档提取和部分插件工具。
+- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`、变量赋值、模版转换/文本处理、文档提取和部分插件工具。
 - 保留 LLM `Prompt` / `SystemPrompt`。
 - 将 Dify Code 节点包装为 HiAgent 可运行的 `handler(params)`。
 - 自动规避 HiAgent 沙箱注入 `main()` 导致的函数名冲突。
 - 生成转换报告，标记需要导入后人工绑定的模型、知识库、工具等资源。
 - 从 HiAgent 插件模版复制 `ToolMap` / `PluginMap`，支持 `convert_to_markdown`、`md_to_docx`、`browser_basic`、`QuerySQLDatabase` 等已知工具映射。
 - 将 Dify 变量赋值节点转换为 Code 节点，复现 overwrite/append/extend/clear 等赋值操作，并把 `conversation.*` 传递给下游。
+- 将 Dify 模版转换节点转换为 HiAgent 文本处理拼接节点，简单占位符自动归一化为 `{{var}}`。
 
 ### 目录结构
 
@@ -94,12 +95,13 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 
 - Reads Dify `*.workflow.yml` exports.
 - Generates HiAgent `DLVersion: v2` workflow YAML.
-- Maps common nodes: `Start`, `End`, `LLM`, `Code`, `Knowledge`, variable assignment, document extraction, and selected plugin tools.
+- Maps common nodes: `Start`, `End`, `LLM`, `Code`, `Knowledge`, variable assignment, template transform/text processing, document extraction, and selected plugin tools.
 - Preserves LLM `Prompt` and `SystemPrompt`.
 - Wraps Dify Code nodes with HiAgent-compatible `handler(params)`.
 - Avoids HiAgent sandbox `main()` name collisions by renaming Dify business functions to `dify_main(...)`.
 - Writes a conversion report with resources that must be rebound after import.
 - Converts Dify variable assignment nodes into Code nodes that reproduce overwrite/append/extend/clear operations and pass `conversation.*` values downstream.
+- Converts Dify template transform nodes into HiAgent text processing concat nodes and normalizes simple placeholders to `{{var}}`.
 - Copies `ToolMap` / `PluginMap` entries from a HiAgent plugin template for known tools such as `convert_to_markdown`, `md_to_docx`, `browser_basic`, and `QuerySQLDatabase`.
 
 ### Install

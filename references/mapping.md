@@ -12,7 +12,18 @@
 | `if-else` | `Condition` | Needs explicit branch mapping; implement after seeing a HiAgent Condition export. |
 | `tool` | `Tool` | Requires a matching HiAgent tool/plugin ID in the target workspace; known plugin mappings are copied from a HiAgent template. |
 | `assigner` | `Code` | Reproduce variable assignment logic in a HiAgent Code node and expose assigned variables as node outputs. |
+| `template-transform` | `TextProcessing` | Convert Dify template transform nodes into HiAgent text processing concat nodes. |
 | `http-request` | `Http` | Map method, URL, headers/body/auth when present. |
+
+## Template Transform / Text Processing
+
+Dify `template-transform` nodes map to HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`:
+
+- Dify `template` becomes `Configs.TextProcessing.ConcatTemplate`.
+- Dify `variables[]` become `InputVariables` with the same variable names.
+- Simple Jinja placeholders like `{{ name }}` are normalized to HiAgent-style `{{name}}`.
+- Output is `OutputSchema: [{Name: output, Type: 0}]`, so downstream `template-transform.output` references bind to `Path: output`.
+- If the Dify template contains Jinja control flow or expressions such as `{% if ... %}` or `{{ value or '0' }}`, still generate a TextProcessing concat node but report a warning: observed HiAgent text processing is documented for string concatenation placeholders, not full Jinja evaluation. Use a Code node instead if exact conditional/default rendering is required.
 
 ## Assigner / Variable Assignment
 

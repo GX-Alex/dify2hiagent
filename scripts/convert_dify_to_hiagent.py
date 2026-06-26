@@ -110,6 +110,26 @@ def convert_template(text: str) -> str:
     return re.sub(r"\{\{#([A-Za-z0-9_-]+)\.([A-Za-z0-9_.*\[\]-]+)#\}\}", r"{{\1_\2}}", text or "")
 
 
+def convert_template_transform_text(text: str) -> str:
+    """Normalize simple Dify/Jinja variables for HiAgent TextProcessing concat templates."""
+    def replace(match: re.Match[str]) -> str:
+        expr = match.group(1).strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+            return "{{" + expr + "}}"
+        return match.group(0)
+
+    return re.sub(r"\{\{\s*(.*?)\s*\}\}", replace, text or "")
+
+
+def has_complex_template_logic(text: str) -> bool:
+    if "{%" in (text or "") or "{#" in (text or ""):
+        return True
+    for match in re.finditer(r"\{\{\s*(.*?)\s*\}\}", text or ""):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", match.group(1).strip()):
+            return True
+    return False
+
+
 def import_yaml():
     try:
         import yaml
@@ -705,6 +725,29 @@ def convert(
                 "TimeoutSeconds": 120,
             }
             report.append(f"变量赋值节点「{hi_node['Name']}」已转换为复现赋值逻辑的 Code 节点，并以节点输出传递给下游。")
+
+        elif dify_type == "template-transform":
+            input_vars = []
+            for var in data.get("variables") or []:
+                mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types, conversation_refs, node_id)
+                mapped["Name"] = var.get("variable", "")
+                input_vars.append(mapped)
+            concat_template = convert_template_transform_text(data.get("template", ""))
+            hi_node["Type"] = "TextProcessing"
+            hi_node["Configs"]["TextProcessing"] = {
+                "ConcatTemplate": concat_template,
+                "CustomDelimiters": None,
+                "Delimiters": None,
+                "InputVariables": input_vars,
+                "OutputSchema": [{"Name": "output", "Type": 0}],
+                "TextProcessingType": "Concat",
+            }
+            if has_complex_template_logic(data.get("template", "")):
+                report.append(
+                    f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点；原 Dify 模板包含 Jinja 条件/表达式，HiAgent 文本处理可能只支持变量占位拼接，导入后请重点复核输出。"
+                )
+            else:
+                report.append(f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点。")
 
         elif dify_type == "document-extractor":
             tool_cfg = tool_catalog.get("convert_to_markdown")

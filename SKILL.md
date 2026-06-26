@@ -61,6 +61,10 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
 
 Read [references/mapping.md](references/mapping.md) for the field mapping and known pitfalls.
 
+## Template Transform Nodes
+
+Dify `template-transform` nodes should become HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`. Normalize simple `{{ var }}` placeholders to `{{var}}`, bind Dify variables as `InputVariables`, and expose `output` for downstream references. Warn when the Dify template uses Jinja control flow or expressions because HiAgent text processing may not evaluate them.
+
 ## Assigner Nodes
 
 Dify `assigner` is a variable assignment node. Convert it to a HiAgent Code node that returns the assigned variable names as outputs, then resolve downstream `conversation.*` references to the nearest upstream assigner output. This preserves normal in-run data flow; cross-turn conversation persistence still needs HiAgent-native review.
