@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import hashlib
 import json
@@ -110,12 +111,36 @@ def convert_template(text: str) -> str:
     return re.sub(r"\{\{#([A-Za-z0-9_-]+)\.([A-Za-z0-9_.*\[\]-]+)#\}\}", r"{{\1_\2}}", text or "")
 
 
+def parse_template_default_expr(expr: str) -> tuple[str, str] | None:
+    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s+or\s+(.+)", expr.strip())
+    if not match:
+        return None
+    name, raw_default = match.group(1), match.group(2).strip()
+    try:
+        default = ast.literal_eval(raw_default)
+    except Exception:
+        default = raw_default.strip("'\"")
+    return name, "" if default is None else str(default)
+
+
+def template_transform_defaults(text: str) -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    for match in re.finditer(r"\{\{\s*(.*?)\s*\}\}", text or ""):
+        parsed = parse_template_default_expr(match.group(1))
+        if parsed and parsed[0] not in defaults:
+            defaults[parsed[0]] = parsed[1]
+    return defaults
+
+
 def convert_template_transform_text(text: str) -> str:
-    """Normalize simple Dify/Jinja variables for HiAgent TextProcessing concat templates."""
+    """Normalize Dify/Jinja variables for HiAgent TextProcessing concat templates."""
     def replace(match: re.Match[str]) -> str:
         expr = match.group(1).strip()
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expr):
             return "{{" + expr + "}}"
+        parsed = parse_template_default_expr(expr)
+        if parsed:
+            return "{{" + parsed[0] + "}}"
         return match.group(0)
 
     return re.sub(r"\{\{\s*(.*?)\s*\}\}", replace, text or "")
@@ -298,6 +323,25 @@ def unique_input_name(base: str, used: set[str]) -> str:
         index += 1
     used.add(candidate)
     return candidate
+
+
+def build_template_default_code(assignments: list[dict[str, str]]) -> str:
+    lines = [
+        "# Dify template-transform 变量默认值预处理。",
+        "def _coalesce(value, default):",
+        "    if value is None or value == '':",
+        "        return default",
+        "    return str(value)",
+        "",
+        "def handler(params):",
+        "    return {",
+    ]
+    for item in assignments:
+        lines.append(
+            f"        {item['output_name']!r}: _coalesce(params.get({item['input_name']!r}), {item['default']!r}),"
+        )
+    lines.extend(["    }", ""])
+    return "\n".join(lines)
 
 
 def build_assigner_code(assignments: list[dict[str, Any]]) -> str:
@@ -727,27 +771,73 @@ def convert(
             report.append(f"变量赋值节点「{hi_node['Name']}」已转换为复现赋值逻辑的 Code 节点，并以节点输出传递给下游。")
 
         elif dify_type == "template-transform":
-            input_vars = []
+            defaults = template_transform_defaults(data.get("template", ""))
+            normalizer_inputs = []
+            normalizer_assignments = []
+            text_input_vars = []
+            used_input_names: set[str] = set()
             for var in data.get("variables") or []:
+                var_name = var.get("variable", "")
+                if not var_name:
+                    continue
+                input_name = unique_input_name(f"input_{var_name}", used_input_names)
                 mapped = map_selector(var.get("value_selector"), code_map, type_map, start_var_types, conversation_refs, node_id)
-                mapped["Name"] = var.get("variable", "")
-                input_vars.append(mapped)
+                mapped["Name"] = input_name
+                normalizer_inputs.append(mapped)
+                normalizer_assignments.append({
+                    "output_name": var_name,
+                    "input_name": input_name,
+                    "default": defaults.get(var_name, ""),
+                })
+
+            normalizer_code = stable_code(f"{node_id}:template-defaults")
+            normalizer_node = {
+                "Code": normalizer_code,
+                "Configs": {
+                    "Code": {
+                        "Code": build_template_default_code(normalizer_assignments),
+                        "InputVariables": normalizer_inputs,
+                        "Language": 1,
+                        "OutputSchema": [{"Name": item["output_name"], "Type": 0} for item in normalizer_assignments],
+                        "Retries": 0,
+                        "TimeoutSeconds": 120,
+                    }
+                },
+                "ErrorConfig": {"ErrorConfigType": "None"},
+                "ID": normalizer_code,
+                "Layout": {"X": float(pos.get("x", 0)) - 260.0, "Y": float(pos.get("y", 0))},
+                "Name": f"{hi_node['Name']}_变量默认值",
+                "Type": "Code",
+            }
+            if parents.get(node_id):
+                normalizer_node["Depends"] = [{"NodeCode": code_map[str(parent)]} for parent in parents[node_id]]
+            add_depends_from_node_refs(normalizer_node)
+            hiagent["Nodes"].append(normalizer_node)
+
+            for item in normalizer_assignments:
+                text_input_vars.append({
+                    "Name": item["output_name"],
+                    "NodeCode": normalizer_code,
+                    "Path": item["output_name"],
+                    "RefType": "node_field",
+                })
             concat_template = convert_template_transform_text(data.get("template", ""))
             hi_node["Type"] = "TextProcessing"
+            hi_node["Depends"] = [{"NodeCode": normalizer_code}]
             hi_node["Configs"]["TextProcessing"] = {
                 "ConcatTemplate": concat_template,
                 "CustomDelimiters": None,
                 "Delimiters": None,
-                "InputVariables": input_vars,
+                "InputVariables": text_input_vars,
                 "OutputSchema": [{"Name": "output", "Type": 0}],
                 "TextProcessingType": "Concat",
             }
             if has_complex_template_logic(data.get("template", "")):
                 report.append(
-                    f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点；原 Dify 模板包含 Jinja 条件/表达式，HiAgent 文本处理可能只支持变量占位拼接，导入后请重点复核输出。"
+                    f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点，并新增变量默认值预处理 Code 节点；原 Dify 模板包含 Jinja 条件/表达式，HiAgent 文本处理可能只支持变量占位拼接，导入后请重点复核输出。"
                 )
             else:
-                report.append(f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点。")
+                report.append(f"模版转换节点「{hi_node['Name']}」已映射为 HiAgent 文本处理拼接节点，并新增变量默认值预处理 Code 节点。")
 
         elif dify_type == "document-extractor":
             tool_cfg = tool_catalog.get("convert_to_markdown")

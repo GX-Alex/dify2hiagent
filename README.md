@@ -17,7 +17,7 @@
 - 生成转换报告，标记需要导入后人工绑定的模型、知识库、工具等资源。
 - 从 HiAgent 插件模版复制 `ToolMap` / `PluginMap`，支持 `convert_to_markdown`、`md_to_docx`、`browser_basic`、`QuerySQLDatabase` 等已知工具映射。
 - 将 Dify 变量赋值节点转换为 Code 节点，复现 overwrite/append/extend/clear 等赋值操作，并把 `conversation.*` 传递给下游。
-- 将 Dify 模版转换节点转换为 HiAgent 文本处理拼接节点，简单占位符自动归一化为 `{{var}}`。
+- 将 Dify 模版转换节点转换为 HiAgent 文本处理拼接节点，并插入默认值预处理 Code 节点，避免非必填上游字段不注入变量。
 
 ### 目录结构
 
@@ -101,7 +101,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 - Avoids HiAgent sandbox `main()` name collisions by renaming Dify business functions to `dify_main(...)`.
 - Writes a conversion report with resources that must be rebound after import.
 - Converts Dify variable assignment nodes into Code nodes that reproduce overwrite/append/extend/clear operations and pass `conversation.*` values downstream.
-- Converts Dify template transform nodes into HiAgent text processing concat nodes and normalizes simple placeholders to `{{var}}`.
+- Converts Dify template transform nodes into HiAgent text processing concat nodes and inserts a default-value Code node so optional upstream fields still populate variables.
 - Copies `ToolMap` / `PluginMap` entries from a HiAgent plugin template for known tools such as `convert_to_markdown`, `md_to_docx`, `browser_basic`, and `QuerySQLDatabase`.
 
 ### Install

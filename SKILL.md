@@ -63,7 +63,7 @@ Read [references/mapping.md](references/mapping.md) for the field mapping and kn
 
 ## Template Transform Nodes
 
-Dify `template-transform` nodes should become HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`. Normalize simple `{{ var }}` placeholders to `{{var}}`, bind Dify variables as `InputVariables`, and expose `output` for downstream references. Warn when the Dify template uses Jinja control flow or expressions because HiAgent text processing may not evaluate them.
+Dify `template-transform` nodes should become HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`. Insert a small default-value Code node before TextProcessing so optional upstream fields still emit values, normalize simple `{{ var }}` placeholders to `{{var}}`, convert `{{ var or 'default' }}` into `{{var}}` plus a Code-node fallback, and expose `output` for downstream references. Warn when the Dify template uses Jinja control flow because HiAgent text processing may not evaluate it.
 
 ## Assigner Nodes
 

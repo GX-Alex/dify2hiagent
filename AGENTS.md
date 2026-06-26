@@ -37,7 +37,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 - Keep the CLI standalone for non-Codex agents.
 - Do not manually edit generated HiAgent YAML unless debugging; prefer improving the converter.
 - Convert Dify `assigner` nodes to Code nodes that output assigned variables and resolve downstream `conversation.*` references to the nearest upstream assigner output.
-- Convert Dify `template-transform` nodes to HiAgent `TextProcessing` concat nodes; warn when templates use Jinja control flow or expressions beyond simple `{{var}}` placeholders.
+- Convert Dify `template-transform` nodes to HiAgent `TextProcessing` concat nodes; insert a default-value Code node for optional upstream fields and warn when templates use Jinja control flow beyond placeholder/default expressions.
 - Known plugin mappings include `document-extractor` -> `convert_to_markdown`, `markdown_to_docx_converter` -> `md_to_docx`, and direct tool-name mappings for `browser_basic` / `QuerySQLDatabase` when present in the HiAgent template.
 - Do not overfit Knowledge output schemas before seeing actual HiAgent runtime output.
 - Do not commit workflow exports that may contain private business data unless explicitly requested.

@@ -20,10 +20,12 @@
 Dify `template-transform` nodes map to HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`:
 
 - Dify `template` becomes `Configs.TextProcessing.ConcatTemplate`.
-- Dify `variables[]` become `InputVariables` with the same variable names.
+- Dify `variables[]` first feed an inserted Code node named like `<template node>_变量默认值`; this node always emits every template variable as a string, so HiAgent TextProcessing receives values even when upstream optional fields are omitted.
 - Simple Jinja placeholders like `{{ name }}` are normalized to HiAgent-style `{{name}}`.
+- Default expressions like `{{ value or '0' }}` are normalized to `{{value}}`; the inserted default-value Code node applies the `'0'` fallback when the upstream value is `None` or an empty string.
+- Variables without an explicit Jinja default use an empty-string fallback.
 - Output is `OutputSchema: [{Name: output, Type: 0}]`, so downstream `template-transform.output` references bind to `Path: output`.
-- If the Dify template contains Jinja control flow or expressions such as `{% if ... %}` or `{{ value or '0' }}`, still generate a TextProcessing concat node but report a warning: observed HiAgent text processing is documented for string concatenation placeholders, not full Jinja evaluation. Use a Code node instead if exact conditional/default rendering is required.
+- If the Dify template contains Jinja control flow such as `{% if ... %}`, still generate a TextProcessing concat node but report a warning: observed HiAgent text processing is documented for string concatenation placeholders, not full Jinja evaluation. Use a Code node instead if exact conditional rendering is required.
 
 ## Assigner / Variable Assignment
 
