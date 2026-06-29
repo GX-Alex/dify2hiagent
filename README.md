@@ -10,13 +10,14 @@
 
 - 读取 Dify `*.workflow.yml` 导出文件。
 - 生成 HiAgent `DLVersion: v2` 工作流 YAML；Dify `advanced-chat` / chatflow 会生成 HiAgent Agent zip 包。
-- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`、变量赋值、模版转换/文本处理、文档提取和部分插件工具。
+- 映射常见节点：`Start`、`End`、`LLM`、`Code`、`Knowledge`、条件分支/选择器、变量赋值、模版转换/文本处理、文档提取和部分插件工具。
 - 保留 LLM `Prompt` / `SystemPrompt`。
 - 将 Dify Code 节点包装为 HiAgent 可运行的 `handler(params)`。
 - 自动规避 HiAgent 沙箱注入 `main()` 导致的函数名冲突。
 - 生成转换报告，标记需要导入后人工绑定的模型、知识库、工具等资源。
 - 从 HiAgent 插件模版复制 `ToolMap` / `PluginMap`，支持 `convert_to_markdown`、`md_to_docx`、`browser_basic`、`QuerySQLDatabase` 等已知工具映射。
 - 将 Dify 变量赋值节点转换为 Code 节点，复现 overwrite/append/extend/clear 等赋值操作，并把 `conversation.*` 传递给下游。
+- 将 Dify `if-else` 条件分支转换为 HiAgent `Condition` 选择器节点，并保留下游 `PortID` 分支路由。
 - 将 Dify 模版转换节点转换为 HiAgent 文本处理拼接节点，并插入默认值预处理 Code 节点，避免非必填上游字段不注入变量。
 - 将 Dify 对话型应用转换为 HiAgent 对话型工作流 zip，包含 `index.yaml` 和 `agent/<name>.yaml`。
 
@@ -94,7 +95,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 ### 已知边界
 
 - Dify 知识库 ID、插件 ID、工具 ID 不能直接转换为 HiAgent 工作空间资源，需要导入后重新绑定。
-- `if-else`、复杂分支和 HTTP 复杂鉴权等需要结合真实 HiAgent 导出样例继续补映射。
+- `if-else` 基础分支已映射为 HiAgent 选择器；Dify 数值大小比较、复杂分支和 HTTP 复杂鉴权等仍需结合真实 HiAgent 导出样例继续补映射。
 - Dify `file-list` 文档提取当前按 HiAgent 插件输入约束默认取首个文件 URL。
 - Knowledge 返回结构不要过早过度适配；应先看运行时输出和下游 Code 节点实际读取字段。
 
@@ -106,11 +107,12 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 
 - Reads Dify `*.workflow.yml` exports.
 - Generates HiAgent `DLVersion: v2` workflow YAML; Dify `advanced-chat` / chatflow apps are emitted as HiAgent Agent zip packages.
-- Maps common nodes: `Start`, `End`, `LLM`, `Code`, `Knowledge`, variable assignment, template transform/text processing, document extraction, and selected plugin tools.
+- Maps common nodes: `Start`, `End`, `LLM`, `Code`, `Knowledge`, conditional branch/selectors, variable assignment, template transform/text processing, document extraction, and selected plugin tools.
 - Preserves LLM `Prompt` and `SystemPrompt`.
 - Wraps Dify Code nodes with HiAgent-compatible `handler(params)`.
 - Avoids HiAgent sandbox `main()` name collisions by renaming Dify business functions to `dify_main(...)`.
 - Writes a conversion report with resources that must be rebound after import.
+- Converts Dify `if-else` branches into HiAgent `Condition` selector nodes and preserves downstream `PortID` branch routing.
 - Converts Dify variable assignment nodes into Code nodes that reproduce overwrite/append/extend/clear operations and pass `conversation.*` values downstream.
 - Converts Dify template transform nodes into HiAgent text processing concat nodes and inserts a default-value Code node so optional upstream fields still populate variables.
 - Converts Dify chatflow apps into HiAgent ChatFlow Agent zip packages containing `index.yaml` and `agent/<name>.yaml`.
@@ -176,6 +178,6 @@ Before handing off a converted workflow:
 ### Known Limits
 
 - Dify knowledge base IDs, plugin IDs, and tool IDs cannot be directly migrated into HiAgent workspace resources. Rebind them after import.
-- `if-else`, complex branch logic, and advanced HTTP auth need additional mapping based on real HiAgent exports.
+- Basic `if-else` branches are mapped to HiAgent selectors; numeric comparisons, complex branch logic, and advanced HTTP auth need additional mapping based on real HiAgent exports.
 - Dify `file-list` document extraction currently uses the first file URL to fit the observed HiAgent plugin `uri` input.
 - Do not overfit Knowledge output schemas until runtime output and downstream Code reads prove a mismatch.

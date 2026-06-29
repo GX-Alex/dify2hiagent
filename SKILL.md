@@ -79,6 +79,10 @@ When Dify `app.mode` is `advanced-chat` or chatflow, generate a HiAgent `MetaTyp
 
 Dify `template-transform` nodes should become HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`. Insert a small default-value Code node before TextProcessing so optional upstream fields still emit values, normalize simple `{{ var }}` placeholders to `{{var}}`, convert `{{ var or 'default' }}` into `{{var}}` plus a Code-node fallback, and expose `output` for downstream references. Warn when the Dify template uses Jinja control flow because HiAgent text processing may not evaluate it.
 
+## If-Else / Selector Nodes
+
+Dify `if-else` nodes should become HiAgent `Condition` selector nodes. Convert each Dify case to `Configs.Condition.IfBranches[]` with IDs `if01`, `if02`, etc.; set `ElseBranch.ID` to `else`. When converting downstream edges from an if-else node, preserve the Dify `sourceHandle` as `Depends[].PortID` (`true`/case IDs -> matching `ifNN`, `false`/`else` -> `else`). Preserve these `PortID` fields when rebuilding dependency lists.
+
 ## Assigner Nodes
 
 Dify `assigner` is a variable assignment node. Convert it to a HiAgent Code node that returns the assigned variable names as outputs, then resolve downstream `conversation.*` references to the nearest upstream assigner output. This preserves normal in-run data flow; cross-turn conversation persistence still needs HiAgent-native review.
@@ -127,4 +131,3 @@ Do not overfit the schema until the user's HiAgent runtime output proves a misma
 - `TypeError: main() got an unexpected keyword argument ...`: rename Dify `main` to `dify_main` and update `handler`.
 - LLM prompt missing after import: inspect a real HiAgent LLM export and use `Prompt`/`SystemPrompt`.
 - Knowledge node empty or wrong field: compare HiAgent runtime output with downstream Code node reads before changing `OutputSchema`.
-

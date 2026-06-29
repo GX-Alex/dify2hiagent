@@ -50,6 +50,29 @@ DIFY_TOOL_NAME_MAP = {
     },
 }
 
+CONDITION_OPERATOR_MAP = {
+    "=": "EQ",
+    "==": "EQ",
+    "eq": "EQ",
+    "equal": "EQ",
+    "equals": "EQ",
+    "is": "EQ",
+    "!=": "NE",
+    "≠": "NE",
+    "ne": "NE",
+    "not equal": "NE",
+    "not equals": "NE",
+    "is not": "NE",
+    "contains": "CONTAINS",
+    "contain": "CONTAINS",
+    "not contains": "NOT_CONTAINS",
+    "does not contain": "NOT_CONTAINS",
+    "empty": "EMPTY",
+    "is empty": "EMPTY",
+    "not empty": "NOT_EMPTY",
+    "is not empty": "NOT_EMPTY",
+}
+
 
 def stable_code(value: str) -> str:
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
@@ -412,6 +435,62 @@ def upstream_map(dify: dict[str, Any]) -> dict[str, list[str]]:
     return parents
 
 
+def incoming_edge_map(dify: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    incoming: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for edge in dify["workflow"]["graph"].get("edges", []):
+        incoming[str(edge.get("target"))].append(edge)
+    return incoming
+
+
+def condition_port_map(nodes: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for node in nodes:
+        data = node.get("data") or {}
+        if data.get("type") != "if-else":
+            continue
+        mapping = {"false": "else", "else": "else"}
+        for index, case in enumerate(data.get("cases") or [], 1):
+            port_id = f"if{index:02d}"
+            for key in (case.get("case_id"), case.get("id")):
+                if key is not None:
+                    mapping[str(key)] = port_id
+            if index == 1:
+                mapping.setdefault("true", port_id)
+        result[str(node.get("id"))] = mapping
+    return result
+
+
+def node_depends_from_edges(
+    node_id: str,
+    incoming_edges: dict[str, list[dict[str, Any]]],
+    code_map: dict[str, str],
+    type_map: dict[str, str],
+    port_map: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    depends = []
+    seen: set[tuple[str, str | None]] = set()
+    for edge in incoming_edges.get(str(node_id), []):
+        source = str(edge.get("source"))
+        code = code_map.get(source)
+        if not code:
+            continue
+        dep: dict[str, Any] = {"NodeCode": code}
+        if type_map.get(source) == "if-else":
+            handle = str(edge.get("sourceHandle") or "")
+            port = port_map.get(source, {}).get(handle)
+            if not port and handle in {"false", "else"}:
+                port = "else"
+            elif not port and handle and handle not in {"source", "target"}:
+                port = handle
+            if port:
+                dep["PortID"] = port
+        key = (code, dep.get("PortID"))
+        if key not in seen:
+            depends.append(dep)
+            seen.add(key)
+    return depends
+
+
 def map_selector(
     selector: list[str] | None,
     code_map: dict[str, str],
@@ -577,6 +656,69 @@ def infer_hi_type_from_value(value: Any) -> int:
             return 8
         return 9
     return 0
+
+
+def condition_json_value(value: Any, var_type: str | None = None) -> str:
+    if isinstance(value, str):
+        type_name = str(var_type or "").lower()
+        text = value.strip()
+        if type_name in {"integer", "number"}:
+            try:
+                value = int(text) if type_name == "integer" else float(text)
+            except ValueError:
+                value = text
+        elif type_name == "boolean":
+            value = text.lower() in {"true", "1", "yes", "y", "是"}
+    return json.dumps(value, ensure_ascii=False)
+
+
+def map_condition_operator(raw_operator: str | None) -> tuple[str, str | None]:
+    key = str(raw_operator or "is").strip().lower().replace("_", " ").replace("-", " ")
+    operator = CONDITION_OPERATOR_MAP.get(key)
+    if operator:
+        return operator, None
+    unsupported = raw_operator or ""
+    return "EQ", f"条件操作符 {unsupported!r} 暂未在 HiAgent 选择器六类操作中找到等价项，已按等于导出，请导入后复核。"
+
+
+def build_condition_node_config(
+    data: dict[str, Any],
+    code_map: dict[str, str],
+    type_map: dict[str, str],
+    start_var_types: dict[str, str],
+    conversation_refs: dict[tuple[str, str], dict[str, Any]],
+    current_node_id: str,
+) -> tuple[dict[str, Any], list[str]]:
+    branches = []
+    warnings = []
+    for index, case in enumerate(data.get("cases") or [], 1):
+        conditions = []
+        for condition in case.get("conditions") or []:
+            operator, warning = map_condition_operator(condition.get("comparison_operator"))
+            if warning:
+                warnings.append(warning)
+            left = map_selector(condition.get("variable_selector"), code_map, type_map, start_var_types, conversation_refs, current_node_id)
+            left["Name"] = "Left"
+            item: dict[str, Any] = {"Left": left, "Operator": operator}
+            if operator in {"EMPTY", "NOT_EMPTY"}:
+                item["Right"] = None
+            elif condition.get("value_selector") or condition.get("target_selector"):
+                right = map_selector(condition.get("value_selector") or condition.get("target_selector"), code_map, type_map, start_var_types, conversation_refs, current_node_id)
+                right["Name"] = "Right"
+                item["Right"] = right
+            else:
+                item["Right"] = {
+                    "JsonValue": condition_json_value(condition.get("value", ""), condition.get("varType")),
+                    "Name": "Right",
+                    "RefType": "value",
+                }
+            conditions.append(item)
+        branches.append({
+            "ConditionLogic": "OR" if str(case.get("logical_operator") or "and").lower() == "or" else "AND",
+            "Conditions": conditions,
+            "ID": f"if{index:02d}",
+        })
+    return {"ElseBranch": {"ID": "else"}, "IfBranches": branches}, warnings
 
 
 def unique_input_name(base: str, used: set[str]) -> str:
@@ -776,16 +918,21 @@ def add_depends_from_node_refs(hi_node: dict[str, Any]) -> None:
     seen = set()
     for dep in hi_node.get("Depends") or []:
         code = dep.get("NodeCode")
-        if code and code != hi_node.get("Code") and code not in seen:
-            depends.append({"NodeCode": code})
-            seen.add(code)
+        key = (code, dep.get("PortID"))
+        if code and code != hi_node.get("Code") and key not in seen:
+            new_dep = {"NodeCode": code}
+            if dep.get("PortID"):
+                new_dep["PortID"] = dep.get("PortID")
+            depends.append(new_dep)
+            seen.add(key)
 
     def walk(value: Any) -> None:
         if isinstance(value, dict):
             code = value.get("NodeCode")
-            if value.get("RefType") == "node_field" and code and code != hi_node.get("Code") and code not in seen:
+            key = (code, None)
+            if value.get("RefType") == "node_field" and code and code != hi_node.get("Code") and key not in seen:
                 depends.append({"NodeCode": code})
-                seen.add(code)
+                seen.add(key)
             for child in value.values():
                 walk(child)
         elif isinstance(value, list):
@@ -812,14 +959,19 @@ def build_tool_node(
     seen = set()
     for dep in hi_node.get("Depends") or []:
         code = dep.get("NodeCode")
-        if code and code not in seen:
-            depends.append({"NodeCode": code})
-            seen.add(code)
+        key = (code, dep.get("PortID"))
+        if code and key not in seen:
+            new_dep = {"NodeCode": code}
+            if dep.get("PortID"):
+                new_dep["PortID"] = dep.get("PortID")
+            depends.append(new_dep)
+            seen.add(key)
     for item in input_variables:
         code = item.get("NodeCode")
-        if code and code not in seen:
+        key = (code, None)
+        if code and key not in seen:
             depends.append({"NodeCode": code})
-            seen.add(code)
+            seen.add(key)
     if depends:
         hi_node["Depends"] = depends
     add_tool_dependency(hiagent, template, cfg)
@@ -835,9 +987,11 @@ def convert(
     graph = dify["workflow"]["graph"]
     nodes = graph.get("nodes", [])
     parents = upstream_map(dify)
+    incoming_edges = incoming_edge_map(dify)
     lookup = node_lookup(dify)
     code_map = {str(node["id"]): stable_code(str(node["id"])) for node in nodes}
     type_map = {str(node["id"]): node["data"]["type"] for node in nodes}
+    branch_ports = condition_port_map(nodes)
     start_node = next((node for node in nodes if node["data"].get("type") == "start"), None)
     if chatflow and start_node:
         code_map["sys"] = code_map[str(start_node["id"])]
@@ -902,8 +1056,8 @@ def convert(
             "Layout": {"X": float(pos.get("x", 0)), "Y": float(pos.get("y", 0))},
             "Name": data.get("title") or node_id,
         }
-        if parents.get(node_id):
-            hi_node["Depends"] = [{"NodeCode": code_map[str(parent)]} for parent in parents[node_id]]
+        if incoming_edges.get(node_id):
+            hi_node["Depends"] = node_depends_from_edges(node_id, incoming_edges, code_map, type_map, branch_ports)
 
         if dify_type == "start":
             schema = [start_schema_item(var) for var in data.get("variables", [])]
@@ -1091,8 +1245,8 @@ def convert(
                 "Name": f"{hi_node['Name']}_变量默认值",
                 "Type": "Code",
             }
-            if parents.get(node_id):
-                normalizer_node["Depends"] = [{"NodeCode": code_map[str(parent)]} for parent in parents[node_id]]
+            if incoming_edges.get(node_id):
+                normalizer_node["Depends"] = node_depends_from_edges(node_id, incoming_edges, code_map, type_map, branch_ports)
             add_depends_from_node_refs(normalizer_node)
             hiagent["Nodes"].append(normalizer_node)
 
@@ -1180,6 +1334,16 @@ def convert(
                     "TimeoutSeconds": 120,
                 }
                 report.append(f"工具节点「{hi_node['Name']}」识别为 {data.get('tool_name')}，但模板中未找到 {hi_tool_name}，已转为占位 Code 节点。")
+
+        elif dify_type == "if-else":
+            condition_config, condition_warnings = build_condition_node_config(
+                data, code_map, type_map, start_var_types, conversation_refs, node_id
+            )
+            hi_node["Type"] = "Condition"
+            hi_node["Configs"]["Condition"] = condition_config
+            for warning in condition_warnings:
+                report.append(f"选择器节点「{hi_node['Name']}」：{warning}")
+            report.append(f"条件分支节点「{hi_node['Name']}」已映射为 HiAgent 选择器节点，并按 sourceHandle 写入下游 Depends.PortID。")
 
         elif dify_type == "knowledge-retrieval":
             config = data.get("multiple_retrieval_config") or {}

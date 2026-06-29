@@ -37,6 +37,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
 - Keep the CLI standalone for non-Codex agents.
 - Do not manually edit generated HiAgent YAML unless debugging; prefer improving the converter.
 - Convert Dify `assigner` nodes to Code nodes that output assigned variables and resolve downstream `conversation.*` references to the nearest upstream assigner output.
+- Convert Dify `if-else` nodes to HiAgent `Condition` selector nodes; map case handles to `if01`, `if02`, etc., map `false` / `else` to `else`, and preserve downstream `Depends[].PortID`.
 - Convert Dify `template-transform` nodes to HiAgent `TextProcessing` concat nodes; insert a default-value Code node for optional upstream fields and warn when templates use Jinja control flow beyond placeholder/default expressions.
 - Convert Dify `advanced-chat` / chatflow apps to HiAgent Agent zip packages with `index.yaml` and `agent/<name>.yaml`; use `--agent-template` to reuse a real HiAgent ChatFlow wrapper and zip trailing signature.
 - Known plugin mappings include `document-extractor` -> `convert_to_markdown`, `markdown_to_docx_converter` -> `md_to_docx`, and direct tool-name mappings for `browser_basic` / `QuerySQLDatabase` when present in the HiAgent template.

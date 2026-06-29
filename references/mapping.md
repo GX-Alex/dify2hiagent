@@ -9,7 +9,7 @@
 | `llm` | `LLM` | Use HiAgent `Prompt` and `SystemPrompt`; output is usually `raw_output`. |
 | `code` | `Code` | Wrap with `handler(params)` and rename Dify `main` to `dify_main`. |
 | `knowledge-retrieval` | `Knowledge` | Use `QueryVariable`; knowledge resources must be rebound in HiAgent. |
-| `if-else` | `Condition` | Needs explicit branch mapping; implement after seeing a HiAgent Condition export. |
+| `if-else` | `Condition` | Map Dify cases to HiAgent selector branches `if01`, `if02`, etc.; map `false` / `else` to `ElseBranch.ID: else`; downstream dependencies from the selector must keep `PortID`. |
 | `tool` | `Tool` | Requires a matching HiAgent tool/plugin ID in the target workspace; known plugin mappings are copied from a HiAgent template. |
 | `assigner` | `Code` | Reproduce variable assignment logic in a HiAgent Code node and expose assigned variables as node outputs. |
 | `template-transform` | `TextProcessing` | Convert Dify template transform nodes into HiAgent text processing concat nodes. |
@@ -40,6 +40,16 @@ Dify `template-transform` nodes map to HiAgent `TextProcessing` nodes with `Text
 - Variables without an explicit Jinja default use an empty-string fallback.
 - Output is `OutputSchema: [{Name: output, Type: 0}]`, so downstream `template-transform.output` references bind to `Path: output`.
 - If the Dify template contains Jinja control flow such as `{% if ... %}`, still generate a TextProcessing concat node but report a warning: observed HiAgent text processing is documented for string concatenation placeholders, not full Jinja evaluation. Use a Code node instead if exact conditional rendering is required.
+
+## If-Else / Selector
+
+Dify `if-else` nodes map to HiAgent `Condition` selector nodes:
+
+- `Configs.Condition.IfBranches[]` uses stable IDs `if01`, `if02`, etc.; `Configs.Condition.ElseBranch.ID` is `else`.
+- Dify edge `sourceHandle` values are translated to downstream `Depends[].PortID`: `true` and the first case ID map to `if01`; later case IDs map to their matching `ifNN`; `false` / `else` maps to `else`.
+- Supported operators map to HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, empty -> `EMPTY`, not empty -> `NOT_EMPTY`, contains -> `CONTAINS`, not contains -> `NOT_CONTAINS`.
+- Constant comparison values are emitted as `Right.RefType: value` with `JsonValue`; variable comparison values are emitted as normal node-field references.
+- Dependency cleanup must preserve `PortID`; otherwise HiAgent imports the selector form but loses branch routing.
 
 ## Assigner / Variable Assignment
 
@@ -151,4 +161,3 @@ for n in d["Nodes"]:
 assert not missing
 assert [(n["Type"], n["Name"]) for n in d["Nodes"] if n["Type"] in ("Start", "End")]
 ```
-
