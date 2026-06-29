@@ -37,6 +37,16 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
   --report output.hiagent.report.md
 ```
 
+For Dify `advanced-chat` / chatflow apps, output a HiAgent Agent zip package and pass a HiAgent ChatFlow agent export as `--agent-template` when available:
+
+```bash
+python scripts/convert_dify_to_hiagent.py input.chatflow.yml \
+  --template hiagent_resource_sample.yaml \
+  --agent-template hiagent_chatflow_agent_export.zip \
+  -o output.hiagent.zip \
+  --report output.hiagent.report.md
+```
+
 If no HiAgent template is available, pass placeholders explicitly:
 
 ```bash
@@ -60,6 +70,10 @@ python scripts/convert_dify_to_hiagent.py input.workflow.yml \
   - `Type: End` must have `Name: End`.
 
 Read [references/mapping.md](references/mapping.md) for the field mapping and known pitfalls.
+
+## ChatFlow / Advanced Chat
+
+When Dify `app.mode` is `advanced-chat` or chatflow, generate a HiAgent `MetaType: Agent` zip package instead of a bare workflow YAML. The zip contains `index.yaml` and `agent/<name>.yaml`; the workflow lives in `AppConfig.ChatFlowDetail` with `FlowType: Agent`. ChatFlow Start includes `query`, `files`, and `chat_histories`; Dify `sys.query` maps to Start `query`. ChatFlow End uses `OutputType: Content`, `StreamOutput: true`, and `RefType: user_variable` `output`, with terminal answer branches writing that variable through `VariablesAssign`.
 
 ## Template Transform Nodes
 

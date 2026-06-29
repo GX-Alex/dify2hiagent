@@ -7,6 +7,8 @@ import copy
 import hashlib
 import json
 import re
+import time
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -172,6 +174,211 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def load_hiagent_template(path: Path | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    if path.suffix.lower() != ".zip":
+        return load_yaml(path)
+    yaml = import_yaml()
+    with zipfile.ZipFile(path) as zf:
+        index = yaml.safe_load(zf.read("index.yaml").decode("utf-8"))
+        main_name = index.get("MainMetaName")
+        agent_names = [name for name in zf.namelist() if name.startswith("agent/") and name.endswith((".yaml", ".yml"))]
+        preferred = f"agent/{main_name}.yaml" if main_name else None
+        selected = preferred if preferred in agent_names else (agent_names[0] if agent_names else None)
+        if not selected:
+            raise SystemExit(f"No agent YAML found in HiAgent zip template: {path}")
+        return yaml.safe_load(zf.read(selected).decode("utf-8"))
+
+
+def is_dify_chatflow(dify: dict[str, Any]) -> bool:
+    mode = str((dify.get("app") or {}).get("mode") or "").lower()
+    return mode in {"advanced-chat", "chatflow", "chat-flow"}
+
+
+def chat_start_schema(dify_start_schema: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    schema = [
+        {
+            "Desc": "用户输入的原始内容",
+            "DescEn": "query",
+            "DescJa": "ユーザーが入力したオリジナルコンテンツ",
+            "DescZhHans": "用户输入的原始内容",
+            "DescZhHant": "用戶輸入的原始內容",
+            "Name": "query",
+            "Required": True,
+            "Type": 0,
+        },
+        {
+            "Desc": "对话附件",
+            "DescEn": "files",
+            "DescJa": "対話添付ファイル",
+            "DescZhHans": "对话附件",
+            "DescZhHant": "對話附件",
+            "Name": "files",
+            "SubParameters": [
+                {"Desc": "文件名", "DescEn": "name", "DescZhHans": "文件名", "DescZhHant": "文件名", "Name": "name", "Required": True, "Type": 0},
+                {"Desc": "文件链接", "DescEn": "url", "DescZhHans": "文件链接", "DescZhHant": "文件鏈接", "Name": "url", "Required": True, "Type": 0},
+            ],
+            "Type": 11,
+        },
+        {
+            "Desc": "用户与应用的对话历史",
+            "DescEn": "chat history",
+            "DescJa": "ユーザーとアプリケーションの対話履歴",
+            "DescZhHans": "用户与应用的对话历史",
+            "DescZhHant": "用戶與應用的對話歷史",
+            "Name": "chat_histories",
+            "SubParameters": [
+                {"Desc": "历史对话问题", "DescEn": "query", "DescZhHans": "历史对话问题", "DescZhHant": "歷史對話問題", "Name": "query", "Type": 0},
+                {"Desc": "历史对话回答", "DescEn": "answer", "DescZhHans": "历史对话回答", "DescZhHant": "歷史對話回答", "Name": "answer", "Type": 0},
+                {
+                    "Desc": "对话附件",
+                    "DescEn": "files",
+                    "DescJa": "対話添付ファイル",
+                    "DescZhHans": "对话附件",
+                    "DescZhHant": "對話附件",
+                    "Name": "files",
+                    "SubParameters": [
+                        {"Desc": "文件名", "DescEn": "name", "DescZhHans": "文件名", "DescZhHant": "文件名", "Name": "name", "Required": True, "Type": 0},
+                        {"Desc": "文件链接", "DescEn": "url", "DescZhHans": "文件链接", "DescZhHant": "文件鏈接", "Name": "url", "Required": True, "Type": 0},
+                    ],
+                    "Type": 11,
+                },
+            ],
+            "Type": 9,
+        },
+    ]
+    existing = {item["Name"] for item in schema}
+    for item in dify_start_schema:
+        if item.get("Name") not in existing:
+            schema.append(item)
+    return schema
+
+
+def default_chat_advanced_config() -> dict[str, Any]:
+    return {
+        "AdvancedReviewType": "unused",
+        "FeedbackTagConfig": {
+            "DislikeTags": ["没有帮助", "知识过时", "问题理解错误", "事实错误", "回答不准确", "内容有害/不健康", "前后回复不一致"],
+            "Enabled": True,
+            "LikeTags": None,
+        },
+        "OpeningConfig": {"OpeningEnabled": False},
+        "ReferenceEnabled": False,
+        "ReviewEnabled": False,
+        "SpeechInteractionConfig": {},
+        "SuggestEnabled": True,
+        "SuggestPromptConfig": {"Enabled": False, "Prompt": ""},
+        "ThoughtLanguageConfig": {"Language": "zh"},
+        "UploadConfig": {
+            "Enabled": True,
+            "UploadAudioAllowed": True,
+            "UploadCompressedAllowed": False,
+            "UploadDocumentAllowed": True,
+            "UploadImageAllowed": True,
+            "UploadOtherAllowed": False,
+            "UploadVideoAllowed": True,
+        },
+    }
+
+
+def agent_template_parts(agent_template: dict[str, Any] | None) -> tuple[dict[str, Any], str]:
+    if not agent_template:
+        return default_chat_advanced_config(), ""
+    single = ((agent_template.get("AppConfig") or {}).get("SingleAgentConfig") or {})
+    chatflow_cfg = single.get("ChatFlowConfig") or {}
+    chat_advanced = chatflow_cfg.get("ChatAdvancedConfig") or single.get("ChatAdvancedConfig") or default_chat_advanced_config()
+    workspace_id = (agent_template.get("AppInfo") or {}).get("WorkspaceID") or (agent_template.get("AppConfig") or {}).get("WorkspaceID") or ""
+    return copy.deepcopy(chat_advanced), workspace_id
+
+
+def wrap_chatflow_agent(hiagent: dict[str, Any], dify: dict[str, Any], agent_template: dict[str, Any] | None = None) -> dict[str, Any]:
+    app = dify.get("app") or {}
+    app_id = stable_code((app.get("name") or "dify_chatflow") + ":agent")
+    workflow_id = hiagent["ID"]
+    now_ms = int(time.time() * 1000)
+    chat_advanced, workspace_id = agent_template_parts(agent_template)
+    app_depends = copy.deepcopy(hiagent.get("Depends") or {})
+    for value in app_depends.values():
+        if isinstance(value, dict):
+            for item in value.values():
+                if isinstance(item, dict):
+                    item.setdefault("SourceTypes", ["Workflow"])
+    single_config = {
+        "A2aAgentIDs": [],
+        "AgentIDs": [],
+        "ChatAdvancedConfig": copy.deepcopy(chat_advanced),
+        "ChatFlowConfig": {
+            "ChatAdvancedConfig": copy.deepcopy(chat_advanced),
+            "RoundsReserved": 3,
+            "UserVariableConfigs": [{"Description": "对话输出", "Name": "output", "Scope": "Agent"}],
+            "Version": "v1",
+            "VersionDescription": app.get("description") or "Converted from Dify chatflow",
+            "WorkflowID": workflow_id,
+            "WorkflowPublishID": workflow_id,
+        },
+        "DatabaseIDs": [],
+        "GraphIDs": [],
+        "KnowledgeIDs": [],
+        "ModelID": "",
+        "ModelName": "",
+        "PrePrompt": "",
+        "PromptConfig": {"PromptMode": "regex"},
+        "QADatasetIDs": [],
+        "SummaryModelID": "",
+        "SummaryModelName": "",
+        "TerminologyIDs": [],
+        "ToolIDs": [],
+        "UpdateTime": "",
+        "VariableConfigs": [],
+        "Version": "v1",
+        "VersionDescription": app.get("description") or "Converted from Dify chatflow",
+        "WorkflowIDs": [],
+    }
+    return {
+        "AppConfig": {
+            "AgentMode": "",
+            "AppID": app_id,
+            "ChatFlowDetail": hiagent,
+            "MultiAgentConfig": None,
+            "SingleAgentConfig": single_config,
+            "WorkspaceID": workspace_id,
+        },
+        "AppDepends": app_depends,
+        "AppInfo": {"AgentMode": "", "AppID": app_id, "AppType": "ChatFlow", "WorkspaceID": workspace_id},
+        "DLVersion": "0.0.1",
+        "Desc": app.get("description", ""),
+        "DisplayName": app.get("name", "Dify 转换对话型工作流"),
+        "LogoPath": "",
+        "MetaType": "Agent",
+        "UniqueName": app_id,
+        "UpdatedAt": now_ms,
+        "VersionCode": stable_code((app.get("name") or "dify_chatflow") + ":version"),
+        "VersionName": "v1",
+    }
+
+
+def write_chatflow_zip(path: Path, agent: dict[str, Any]) -> None:
+    app_name = agent.get("DisplayName") or "Dify 转换对话型工作流"
+    index = {
+        "DLVersion": "0.0.1",
+        "FromWorkspaceID": (agent.get("AppInfo") or {}).get("WorkspaceID") or "",
+        "MainMeta": "Agent",
+        "MainMetaName": app_name,
+        "MainUniqueName": agent.get("UniqueName"),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("index.yaml", dump_yaml(index))
+        zf.writestr(f"agent/{app_name}.yaml", dump_yaml(agent))
+
+
+def report_workflow(artifact: dict[str, Any]) -> dict[str, Any]:
+    if artifact.get("MetaType") == "Agent":
+        return ((artifact.get("AppConfig") or {}).get("ChatFlowDetail") or {})
+    return artifact
+
+
 def node_lookup(dify: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {node["id"]: node for node in dify["workflow"]["graph"]["nodes"]}
 
@@ -202,6 +409,8 @@ def map_selector(
         if resolved:
             return copy.deepcopy(resolved)
         return {"Path": path, "RefType": "node_field"}
+    if source == "sys" and "sys" in code_map:
+        return {"NodeCode": code_map["sys"], "Path": path, "RefType": "node_field"}
     if source in code_map:
         source_type = type_map.get(source)
         if source_type == "llm" and path == "text":
@@ -244,6 +453,40 @@ def parse_dify_template_ref(value: Any) -> list[str] | None:
     if not match:
         return None
     return [match.group(1), match.group(2)]
+
+
+def dify_template_refs(text: str) -> list[tuple[str, list[str]]]:
+    refs = []
+    for match in re.finditer(r"\{\{#([A-Za-z0-9_-]+)\.([A-Za-z0-9_.*\[\]-]+)#\}\}", text or ""):
+        refs.append((match.group(0), [match.group(1), match.group(2)]))
+    return refs
+
+
+def build_answer_code(template: str, replacements: list[tuple[str, str]]) -> str:
+    lines = [
+        "# Dify answer 节点转换：渲染回答模板并输出给 HiAgent 对话型 End。",
+        f"ANSWER_TEMPLATE = {template!r}",
+        "",
+        "def _stringify(value):",
+        "    if value is None:",
+        "        return ''",
+        "    if isinstance(value, list):",
+        "        return '\\n'.join(_stringify(item) for item in value)",
+        "    if isinstance(value, dict):",
+        "        if 'url' in value:",
+        "            return str(value.get('url') or '')",
+        "        if 'path' in value:",
+        "            return str(value.get('path') or '')",
+        "        return str(value)",
+        "    return str(value)",
+        "",
+        "def handler(params):",
+        "    output = ANSWER_TEMPLATE",
+    ]
+    for token, name in replacements:
+        lines.append(f"    output = output.replace({token!r}, _stringify(params.get({name!r})))")
+    lines.extend(["    return {'output': output}", ""])
+    return "\n".join(lines)
 
 
 def assigner_output_names(node: dict[str, Any]) -> set[str]:
@@ -565,6 +808,7 @@ def convert(
     template: dict[str, Any] | None,
     fallback_model_id: str,
     fallback_model_name: str,
+    chatflow: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     graph = dify["workflow"]["graph"]
     nodes = graph.get("nodes", [])
@@ -573,6 +817,9 @@ def convert(
     code_map = {str(node["id"]): stable_code(str(node["id"])) for node in nodes}
     type_map = {str(node["id"]): node["data"]["type"] for node in nodes}
     start_node = next((node for node in nodes if node["data"].get("type") == "start"), None)
+    if chatflow and start_node:
+        code_map["sys"] = code_map[str(start_node["id"])]
+        type_map["sys"] = "start"
     start_var_types = {var.get("variable", ""): var.get("type", "") for var in ((start_node or {}).get("data") or {}).get("variables", [])}
     conversation_refs = build_conversation_refs(nodes, parents, code_map)
     report: list[str] = []
@@ -608,7 +855,7 @@ def convert(
         },
         "Desc": app.get("description", ""),
         "DisplayName": app.get("name", "Dify 转换工作流"),
-        "FlowType": "Workflow",
+        "FlowType": "Agent" if chatflow else "Workflow",
         "ID": flow_id,
         "LogoPath": "",
         "MetaType": "Workflow",
@@ -638,6 +885,8 @@ def convert(
 
         if dify_type == "start":
             schema = [start_schema_item(var) for var in data.get("variables", [])]
+            if chatflow:
+                schema = chat_start_schema(schema)
             hi_node["Type"] = "Start"
             hi_node["Name"] = "Start"
             hi_node["Configs"]["Start"] = {"InputSchema": schema, "OutputSchema": copy.deepcopy(schema)}
@@ -651,7 +900,18 @@ def convert(
                 inputs.append(mapped)
             hi_node["Type"] = "End"
             hi_node["Name"] = "End"
-            hi_node["Configs"]["End"] = {"InputVariables": inputs, "OutputType": "Variable"}
+            if chatflow:
+                first = copy.deepcopy(inputs[0]) if inputs else {"Name": "output", "Path": "output", "RefType": "user_variable"}
+                first["Name"] = "output"
+                hi_node["Configs"]["End"] = {
+                    "InputVariables": [first],
+                    "OutputSchema": [{"Name": "content", "Required": True, "Type": 0}],
+                    "OutputType": "Content",
+                    "StreamOutput": True,
+                    "Template": "{{output}}",
+                }
+            else:
+                hi_node["Configs"]["End"] = {"InputVariables": inputs, "OutputType": "Variable"}
 
         elif dify_type == "llm":
             params = ((data.get("model") or {}).get("completion_params") or {})
@@ -920,6 +1180,28 @@ def convert(
             }
             report.append(f"知识库节点「{hi_node['Name']}」需要在 HiAgent 导入后绑定 KnowledgeRange；Dify dataset_ids={data.get('dataset_ids') or []}。")
 
+        elif dify_type == "answer":
+            answer_text = data.get("answer", "")
+            input_vars = []
+            replacements = []
+            used_input_names: set[str] = set()
+            for index, (token, selector) in enumerate(dify_template_refs(answer_text), 1):
+                name = unique_input_name(f"answer_var_{index}", used_input_names)
+                mapped = map_selector(selector, code_map, type_map, start_var_types, conversation_refs, node_id)
+                mapped["Name"] = name
+                input_vars.append(mapped)
+                replacements.append((token, name))
+            hi_node["Type"] = "Code"
+            hi_node["Configs"]["Code"] = {
+                "Code": build_answer_code(answer_text, replacements),
+                "InputVariables": input_vars,
+                "Language": 1,
+                "OutputSchema": [{"Name": "output", "Type": 0}],
+                "Retries": 0,
+                "TimeoutSeconds": 120,
+            }
+            report.append(f"回答节点「{hi_node['Name']}」已转为可渲染变量的输出组装 Code 节点。")
+
         else:
             hi_node["Type"] = "Code"
             hi_node["Configs"]["Code"] = {
@@ -945,25 +1227,53 @@ def convert(
         terminal_codes = [code_map[node_id] for node_id in terminal_ids if node_id in code_map]
         if terminal_codes:
             end_code = stable_code("synthetic_end")
+            if chatflow:
+                assign_codes = []
+                for index, code in enumerate(terminal_codes):
+                    assign_code = stable_code(f"synthetic_end_assign:{index}:{code}")
+                    assign_codes.append(assign_code)
+                    hiagent["Nodes"].append({
+                        "Code": assign_code,
+                        "Configs": {
+                            "VariablesAssign": {
+                                "Variables": [{"Name": "output", "NodeCode": code, "Path": "output", "RefType": "node_field"}]
+                            }
+                        },
+                        "Depends": [{"NodeCode": code}],
+                        "ErrorConfig": {"ErrorConfigType": "None"},
+                        "ID": assign_code,
+                        "Layout": {"X": 2400.0, "Y": 320.0 + index * 180.0},
+                        "Name": f"变量赋值{index + 1:02d}",
+                        "Type": "VariablesAssign",
+                    })
+                end_config = {
+                    "InputVariables": [{"Name": "output", "Path": "output", "RefType": "user_variable"}],
+                    "OutputSchema": [{"Name": "content", "Required": True, "Type": 0}],
+                    "OutputType": "Content",
+                    "StreamOutput": True,
+                    "Template": "{{output}}",
+                }
+                end_depends = [{"NodeCode": code} for code in assign_codes]
+            else:
+                end_config = {
+                    "InputVariables": [
+                        {"Name": f"output_{index + 1}", "NodeCode": code, "Path": "output", "RefType": "node_field"}
+                        for index, code in enumerate(terminal_codes)
+                    ],
+                    "OutputType": "Variable",
+                }
+                end_depends = [{"NodeCode": code} for code in terminal_codes]
             hiagent["Nodes"].append({
                 "Code": end_code,
-                "Configs": {
-                    "End": {
-                        "InputVariables": [
-                            {"Name": f"output_{index + 1}", "NodeCode": code, "Path": "output", "RefType": "node_field"}
-                            for index, code in enumerate(terminal_codes)
-                        ],
-                        "OutputType": "Variable",
-                    }
-                },
-                "Depends": [{"NodeCode": code} for code in terminal_codes],
+                "Configs": {"End": end_config},
+                "Depends": end_depends,
                 "ErrorConfig": {"ErrorConfigType": "None"},
                 "ID": end_code,
                 "Layout": {"X": 2600.0, "Y": 420.0},
                 "Name": "End",
                 "Type": "End",
             })
-            report.append("原 Dify 应用未包含标准 end 节点；已追加一个合成 End 节点用于 HiAgent 工作流导入。")
+            report.append("原 Dify 应用未包含标准 end 节点；已追加合成 End 节点用于 HiAgent 工作流导入。")
 
     return hiagent, report
 
@@ -985,16 +1295,18 @@ def dump_yaml(data: dict[str, Any]) -> str:
 
 
 def write_report(path: Path, hiagent: dict[str, Any], report: list[str]) -> None:
+    workflow = report_workflow(hiagent)
     node_lines = []
-    for node in hiagent["Nodes"]:
+    for node in workflow["Nodes"]:
         depends = ", ".join(dep["NodeCode"] for dep in node.get("Depends", [])) or "-"
         node_lines.append(f"- {node['Name']}：{node['Type']}，Code={node['Code']}，Depends={depends}")
     text = "\n".join(
         [
             "# Dify 到 HiAgent 转换报告",
             "",
-            f"- 工作流：{hiagent.get('DisplayName')}",
-            f"- 节点数：{len(hiagent.get('Nodes', []))}",
+            f"- 工作流：{hiagent.get('DisplayName') or workflow.get('DisplayName')}",
+            f"- 类型：{'对话型工作流 Agent zip' if hiagent.get('MetaType') == 'Agent' else '工作流 YAML'}",
+            f"- 节点数：{len(workflow.get('Nodes', []))}",
             "",
             "## 需要导入后检查",
             "",
@@ -1018,7 +1330,8 @@ def write_report(path: Path, hiagent: dict[str, Any], report: list[str]) -> None
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
-    parser.add_argument("--template", type=Path, help="Optional HiAgent export YAML used to copy ModelMap/model IDs.")
+    parser.add_argument("--template", type=Path, help="Optional HiAgent export YAML/zip used to copy ModelMap/model IDs and resources.")
+    parser.add_argument("--agent-template", type=Path, help="Optional HiAgent ChatFlow agent export zip/YAML used to copy Agent wrapper settings.")
     parser.add_argument("--model-id", default="REPLACE_WITH_HIAGENT_MODEL_ID")
     parser.add_argument("--model-name", default="REPLACE_WITH_HIAGENT_MODEL_NAME")
     parser.add_argument("-o", "--output", type=Path, required=True)
@@ -1026,13 +1339,24 @@ def main() -> None:
     args = parser.parse_args()
 
     dify = load_yaml(args.input)
-    template = load_yaml(args.template) if args.template else None
-    hiagent, report = convert(dify, template, args.model_id, args.model_name)
+    template = load_hiagent_template(args.template)
+    agent_template = load_hiagent_template(args.agent_template)
+    chatflow = is_dify_chatflow(dify)
+    hiagent, report = convert(dify, template, args.model_id, args.model_name, chatflow=chatflow)
+    if chatflow:
+        hiagent = wrap_chatflow_agent(hiagent, dify, agent_template)
+        report.append("检测到 Dify advanced-chat/chatflow，已输出 HiAgent 对话型工作流 Agent zip 包。")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(dump_yaml(hiagent), encoding="utf-8")
+    if chatflow:
+        if args.output.suffix.lower() != ".zip":
+            args.output = args.output.with_suffix(".zip")
+        write_chatflow_zip(args.output, hiagent)
+    else:
+        args.output.write_text(dump_yaml(hiagent), encoding="utf-8")
     write_report(args.report, hiagent, report)
-    print(json.dumps({"output": str(args.output), "report": str(args.report), "nodes": len(hiagent["Nodes"])}, ensure_ascii=False))
+    workflow = report_workflow(hiagent)
+    print(json.dumps({"output": str(args.output), "report": str(args.report), "nodes": len(workflow["Nodes"]), "chatflow": chatflow}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

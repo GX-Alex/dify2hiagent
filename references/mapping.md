@@ -15,6 +15,20 @@
 | `template-transform` | `TextProcessing` | Convert Dify template transform nodes into HiAgent text processing concat nodes. |
 | `http-request` | `Http` | Map method, URL, headers/body/auth when present. |
 
+## ChatFlow / Advanced Chat Packaging
+
+Dify apps with `app.mode: advanced-chat` are chatflows. Convert them to HiAgent Agent zip packages, not bare workflow YAML:
+
+- Zip layout: `index.yaml` plus `agent/<DisplayName>.yaml`.
+- Top-level agent YAML: `DLVersion: 0.0.1`, `MetaType: Agent`, `AppInfo.AppType: ChatFlow`.
+- The converted workflow is stored under `AppConfig.ChatFlowDetail`, with `DLVersion: v2`, `MetaType: Workflow`, and `FlowType: Agent`.
+- Copy resource maps into both `ChatFlowDetail.Depends` and top-level `AppDepends`.
+- ChatFlow Start schema must include `query`, `files`, and `chat_histories`; preserve additional Dify start variables after these built-ins.
+- Dify `sys.query` maps to the ChatFlow Start `query` field.
+- Dify `answer` nodes become Code nodes that render the answer template and output `output`.
+- Synthetic ChatFlow End should match HiAgent exports: terminal branches write Agent user variable `output` through `VariablesAssign`; End reads `RefType: user_variable`, `Path: output`, `OutputType: Content`, `StreamOutput: true`, `Template: {{output}}`.
+- Use `--agent-template` with a real HiAgent ChatFlow agent zip to reuse wrapper settings such as opening questions, upload config, feedback config, and workspace ID.
+
 ## Template Transform / Text Processing
 
 Dify `template-transform` nodes map to HiAgent `TextProcessing` nodes with `TextProcessingType: Concat`:
