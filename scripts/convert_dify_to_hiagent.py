@@ -6,6 +6,7 @@ import ast
 import copy
 import hashlib
 import json
+import struct
 import re
 import time
 import zipfile
@@ -358,7 +359,24 @@ def wrap_chatflow_agent(hiagent: dict[str, Any], dify: dict[str, Any], agent_tem
     }
 
 
-def write_chatflow_zip(path: Path, agent: dict[str, Any]) -> None:
+def zip_trailing_signature(path: Path | None) -> bytes:
+    if not path or path.suffix.lower() != ".zip" or not path.exists():
+        return b""
+    data = path.read_bytes()
+    eocd = data.rfind(b"PK\x05\x06")
+    if eocd < 0 or eocd + 22 > len(data):
+        return b""
+    comment_len = struct.unpack_from("<H", data, eocd + 20)[0]
+    start = eocd + 22 + comment_len
+    return data[start:]
+
+
+def default_zip_trailing_signature(agent: dict[str, Any]) -> bytes:
+    seed = (agent.get("UniqueName") or agent.get("DisplayName") or "dify2hiagent").encode("utf-8")
+    return hashlib.md5(seed).hexdigest().encode("ascii")
+
+
+def write_chatflow_zip(path: Path, agent: dict[str, Any], trailing_signature: bytes = b"") -> None:
     app_name = agent.get("DisplayName") or "Dify 转换对话型工作流"
     index = {
         "DLVersion": "0.0.1",
@@ -371,6 +389,10 @@ def write_chatflow_zip(path: Path, agent: dict[str, Any]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("index.yaml", dump_yaml(index))
         zf.writestr(f"agent/{app_name}.yaml", dump_yaml(agent))
+    signature = trailing_signature or default_zip_trailing_signature(agent)
+    if signature:
+        with path.open("ab") as f:
+            f.write(signature)
 
 
 def report_workflow(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -1351,7 +1373,7 @@ def main() -> None:
     if chatflow:
         if args.output.suffix.lower() != ".zip":
             args.output = args.output.with_suffix(".zip")
-        write_chatflow_zip(args.output, hiagent)
+        write_chatflow_zip(args.output, hiagent, zip_trailing_signature(args.agent_template))
     else:
         args.output.write_text(dump_yaml(hiagent), encoding="utf-8")
     write_report(args.report, hiagent, report)

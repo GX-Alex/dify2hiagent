@@ -53,7 +53,7 @@ python3 scripts/convert_dify_to_hiagent.py input.workflow.yml \
   --report output.hiagent.report.md
 ```
 
-Dify `advanced-chat` / chatflow 会输出 HiAgent 对话型工作流 zip。建议同时提供普通资源模版和对话型 Agent zip 模版：
+Dify `advanced-chat` / chatflow 会输出 HiAgent 对话型工作流 zip。建议同时提供普通资源模版和对话型 Agent zip 模版，以复用外层配置和 zip 尾部签名：
 
 ```bash
 python3 scripts/convert_dify_to_hiagent.py input.chatflow.yml \

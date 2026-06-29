@@ -27,7 +27,7 @@ Dify apps with `app.mode: advanced-chat` are chatflows. Convert them to HiAgent 
 - Dify `sys.query` maps to the ChatFlow Start `query` field.
 - Dify `answer` nodes become Code nodes that render the answer template and output `output`.
 - Synthetic ChatFlow End should match HiAgent exports: terminal branches write Agent user variable `output` through `VariablesAssign`; End reads `RefType: user_variable`, `Path: output`, `OutputType: Content`, `StreamOutput: true`, `Template: {{output}}`.
-- Use `--agent-template` with a real HiAgent ChatFlow agent zip to reuse wrapper settings such as opening questions, upload config, feedback config, and workspace ID.
+- Use `--agent-template` with a real HiAgent ChatFlow agent zip to reuse wrapper settings such as opening questions, upload config, feedback config, workspace ID, and the 32-byte trailing signature after the zip EOCD record. If no template signature is available, generate a 32-byte hex fallback so HiAgent import does not fail with EOCD/signature errors.
 
 ## Template Transform / Text Processing
 

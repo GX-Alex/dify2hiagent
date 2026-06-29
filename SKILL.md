@@ -73,7 +73,7 @@ Read [references/mapping.md](references/mapping.md) for the field mapping and kn
 
 ## ChatFlow / Advanced Chat
 
-When Dify `app.mode` is `advanced-chat` or chatflow, generate a HiAgent `MetaType: Agent` zip package instead of a bare workflow YAML. The zip contains `index.yaml` and `agent/<name>.yaml`; the workflow lives in `AppConfig.ChatFlowDetail` with `FlowType: Agent`. ChatFlow Start includes `query`, `files`, and `chat_histories`; Dify `sys.query` maps to Start `query`. ChatFlow End uses `OutputType: Content`, `StreamOutput: true`, and `RefType: user_variable` `output`, with terminal answer branches writing that variable through `VariablesAssign`.
+When Dify `app.mode` is `advanced-chat` or chatflow, generate a HiAgent `MetaType: Agent` zip package instead of a bare workflow YAML. The zip contains `index.yaml` and `agent/<name>.yaml`; the workflow lives in `AppConfig.ChatFlowDetail` with `FlowType: Agent`. Preserve or generate the 32-byte trailing signature after the zip EOCD record because HiAgent imports may reject unsigned-looking packages. ChatFlow Start includes `query`, `files`, and `chat_histories`; Dify `sys.query` maps to Start `query`. ChatFlow End uses `OutputType: Content`, `StreamOutput: true`, and `RefType: user_variable` `output`, with terminal answer branches writing that variable through `VariablesAssign`.
 
 ## Template Transform Nodes
 
