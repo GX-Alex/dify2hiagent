@@ -48,7 +48,7 @@ Dify `if-else` nodes map to HiAgent `Condition` selector nodes:
 
 - `Configs.Condition.IfBranches[]` uses stable IDs `if01`, `if02`, etc.; `Configs.Condition.ElseBranch.ID` is `else`.
 - Dify edge `sourceHandle` values are translated to downstream `Depends[].PortID`: `true` and the first case ID map to `if01`; later case IDs map to their matching `ifNN`; `false` / `else` maps to `else`.
-- Supported operators map to observed HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, contains -> `CONTAINS`, not contains -> `NOT_CONTAINS`. Empty checks should be represented as `EQ` with `JsonValue: "\"\""`, and not-empty checks as `NE` with `JsonValue: "\"\""`, because observed HiAgent imports reject `EMPTY` / `NOT_EMPTY` as invalid `ConditionOperator` strings.
+- Supported operators map to observed HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, contains -> `IN`, not contains -> `NOTIN`. Empty checks should be represented as `EQ` with `JsonValue: "\"\""`, and not-empty checks as `NE` with `JsonValue: "\"\""`, because observed HiAgent imports reject `EMPTY` / `NOTEMPTY` as invalid `ConditionOperator` strings in some exports.
 - Constant comparison values are emitted as `Right.RefType: value` with `JsonValue`; variable comparison values are emitted as normal node-field references.
 - Dependency cleanup must preserve `PortID`; otherwise HiAgent imports the selector form but loses branch routing.
 

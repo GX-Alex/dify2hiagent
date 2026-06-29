@@ -63,10 +63,10 @@ CONDITION_OPERATOR_MAP = {
     "not equal": "NE",
     "not equals": "NE",
     "is not": "NE",
-    "contains": "CONTAINS",
-    "contain": "CONTAINS",
-    "not contains": "NOT_CONTAINS",
-    "does not contain": "NOT_CONTAINS",
+    "contains": "IN",
+    "contain": "IN",
+    "not contains": "NOTIN",
+    "does not contain": "NOTIN",
     # HiAgent docs show empty / not-empty in the UI, but observed exports only
     # accept ConditionOperator strings such as EQ and NE. Represent empty checks
     # as equality against an empty string to avoid invalid enum values on import.
