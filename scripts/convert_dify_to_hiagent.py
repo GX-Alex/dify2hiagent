@@ -608,6 +608,60 @@ def build_end_passthrough_code(output_names: list[str]) -> str:
     return "\n".join(lines)
 
 
+def build_variable_merge_node(
+    merge_code: str,
+    end_specs: list[dict[str, Any]],
+    x: float = 2300.0,
+    y: float = 360.0,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    groups = []
+    end_inputs = []
+    depends = []
+    seen_dep: set[tuple[str, str | None]] = set()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+
+    for spec in end_specs:
+        for dep in spec.get("Depends") or []:
+            code = dep.get("NodeCode")
+            key = (code, dep.get("PortID"))
+            if code and key not in seen_dep:
+                new_dep = {"NodeCode": code}
+                if dep.get("PortID"):
+                    new_dep["PortID"] = dep.get("PortID")
+                depends.append(new_dep)
+                seen_dep.add(key)
+        for item in spec.get("InputVariables") or []:
+            name = item.get("Name") or "output"
+            grouped.setdefault(name, []).append(item)
+
+    for group_index, (output_name, variables) in enumerate(grouped.items(), 1):
+        group_name = f"Group{group_index}"
+        group_variables = []
+        for var_index, variable in enumerate(variables):
+            item = copy.deepcopy(variable)
+            item["Name"] = f"{group_name}[{var_index}]"
+            group_variables.append(item)
+        groups.append({"Name": group_name, "Type": 0, "Variables": group_variables})
+        end_inputs.append({
+            "Name": output_name,
+            "NodeCode": merge_code,
+            "Path": group_name,
+            "RefType": "node_field",
+        })
+
+    node = {
+        "Code": merge_code,
+        "Configs": {"VariableMerge": {"Groups": groups}},
+        "Depends": depends,
+        "ErrorConfig": {"ErrorConfigType": "None"},
+        "ID": merge_code,
+        "Layout": {"X": x, "Y": y},
+        "Name": "变量聚合01",
+        "Type": "VariableMerge",
+    }
+    return node, end_inputs
+
+
 def assigner_output_names(node: dict[str, Any]) -> set[str]:
     names = set()
     data = node.get("data") or {}
@@ -940,9 +994,12 @@ def parent_ref_for_path(hi_node: dict[str, Any], path: str) -> dict[str, Any] | 
     return None
 
 
-def add_depends_from_node_refs(hi_node: dict[str, Any]) -> None:
+def add_depends_from_node_refs(hi_node: dict[str, Any], include_config_refs: bool | None = None) -> None:
     depends = []
     seen = set()
+    has_flow_depends = bool(hi_node.get("Depends"))
+    if include_config_refs is None:
+        include_config_refs = not has_flow_depends
     for dep in hi_node.get("Depends") or []:
         code = dep.get("NodeCode")
         key = (code, dep.get("PortID"))
@@ -966,7 +1023,8 @@ def add_depends_from_node_refs(hi_node: dict[str, Any]) -> None:
             for child in value:
                 walk(child)
 
-    walk(hi_node.get("Configs"))
+    if include_config_refs:
+        walk(hi_node.get("Configs"))
     if depends:
         hi_node["Depends"] = depends
 
@@ -993,12 +1051,13 @@ def build_tool_node(
                 new_dep["PortID"] = dep.get("PortID")
             depends.append(new_dep)
             seen.add(key)
-    for item in input_variables:
-        code = item.get("NodeCode")
-        key = (code, None)
-        if code and key not in seen:
-            depends.append({"NodeCode": code})
-            seen.add(key)
+    if not depends:
+        for item in input_variables:
+            code = item.get("NodeCode")
+            key = (code, None)
+            if code and key not in seen:
+                depends.append({"NodeCode": code})
+                seen.add(key)
     if depends:
         hi_node["Depends"] = depends
     add_tool_dependency(hiagent, template, cfg)
@@ -1021,6 +1080,7 @@ def convert(
     branch_ports = condition_port_map(nodes)
     end_node_count = sum(1 for node in nodes if (node.get("data") or {}).get("type") == "end")
     collapse_multiple_ends = end_node_count > 1 and not chatflow
+    merged_end_specs: list[dict[str, Any]] = []
     start_node = next((node for node in nodes if node["data"].get("type") == "start"), None)
     if chatflow and start_node:
         code_map["sys"] = code_map[str(start_node["id"])]
@@ -1104,17 +1164,13 @@ def convert(
                 mapped["Name"] = output.get("variable", "")
                 inputs.append(mapped)
             if collapse_multiple_ends:
-                output_names = [item.get("Name") or f"output_{index + 1}" for index, item in enumerate(inputs)]
-                hi_node["Type"] = "Code"
-                hi_node["Configs"]["Code"] = {
-                    "Code": build_end_passthrough_code(output_names),
+                merged_end_specs.append({
+                    "Name": hi_node["Name"],
+                    "Depends": copy.deepcopy(hi_node.get("Depends") or []),
                     "InputVariables": inputs,
-                    "Language": 1,
-                    "OutputSchema": [{"Name": name, "Type": 0} for name in output_names] + [{"Name": "output", "Type": 0}],
-                    "Retries": 0,
-                    "TimeoutSeconds": 120,
-                }
-                report.append(f"Dify 结束节点「{hi_node['Name']}」已转为输出组装 Code 节点；多 End 工作流将追加唯一 HiAgent End。")
+                })
+                report.append(f"Dify 结束节点「{hi_node['Name']}」已并入 HiAgent 变量聚合节点；多 End 工作流将追加唯一 End。")
+                continue
             else:
                 hi_node["Type"] = "End"
                 hi_node["Name"] = "End"
@@ -1448,6 +1504,23 @@ def convert(
 
         add_depends_from_node_refs(hi_node)
         hiagent["Nodes"].append(hi_node)
+
+    if collapse_multiple_ends and merged_end_specs:
+        merge_code = stable_code("synthetic_variable_merge")
+        merge_node, end_inputs = build_variable_merge_node(merge_code, merged_end_specs)
+        hiagent["Nodes"].append(merge_node)
+        end_code = stable_code("synthetic_end")
+        hiagent["Nodes"].append({
+            "Code": end_code,
+            "Configs": {"End": {"InputVariables": end_inputs, "OutputType": "Variable"}},
+            "Depends": [{"NodeCode": merge_code}],
+            "ErrorConfig": {"ErrorConfigType": "None"},
+            "ID": end_code,
+            "Layout": {"X": 2600.0, "Y": 420.0},
+            "Name": "End",
+            "Type": "End",
+        })
+        report.append("检测到多个 Dify end 节点；已按 HiAgent 样例使用 VariableMerge 聚合多路分支输出，并追加唯一 End。")
 
     if not any(node.get("Type") == "End" for node in hiagent["Nodes"]):
         source_ids = {str(edge.get("source")) for edge in graph.get("edges", [])}

@@ -85,7 +85,7 @@ Dify `if-else` nodes should become HiAgent `Condition` selector nodes. Convert e
 
 ## Multiple End Nodes
 
-HiAgent workflow imports require exactly one `Start` node and one `End` node. If a Dify workflow has multiple `end` nodes, convert each Dify end into a Code node that exposes the branch output plus an `output` field, then append one synthetic HiAgent `End` node that references those branch output nodes.
+HiAgent workflow imports require exactly one `Start` node and one `End` node. If a Dify workflow has multiple `end` nodes, do not convert each one to a HiAgent End. Instead, merge their branch outputs with a HiAgent `VariableMerge` node and append one synthetic End that reads the merge groups. For nodes behind a selector, keep only the selector `Depends[].PortID` as the control-flow dependency; variable references to Start or other upstream nodes should stay in `InputVariables` and must not create extra `Depends` edges that bypass the selector.
 
 ## Assigner Nodes
 

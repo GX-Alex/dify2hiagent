@@ -51,6 +51,16 @@ Dify `if-else` nodes map to HiAgent `Condition` selector nodes:
 - Supported operators map to observed HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, contains -> `IN`, not contains -> `NOTIN`. Empty checks should be represented as `EQ` with `JsonValue: "\"\""`, and not-empty checks as `NE` with `JsonValue: "\"\""`, because observed HiAgent imports reject `EMPTY` / `NOTEMPTY` as invalid `ConditionOperator` strings in some exports.
 - Constant comparison values are emitted as `Right.RefType: value` with `JsonValue`; variable comparison values are emitted as normal node-field references.
 - Dependency cleanup must preserve `PortID`; otherwise HiAgent imports the selector form but loses branch routing.
+- Do not add extra `Depends` edges merely because a branch node references Start variables. Keep those references in `InputVariables`; otherwise the canvas shows Start bypassing the selector and the branch may run outside the selected path.
+
+## Multiple End / Variable Merge
+
+HiAgent imports require exactly one Start and one End. For Dify workflows with multiple `end` nodes:
+
+- Do not emit multiple HiAgent `End` nodes.
+- Build one `VariableMerge` node. Group outputs by Dify end output variable name, for example all `text` branch outputs become `Group1`.
+- `VariableMerge.Depends` should use the original branch-control dependencies: LLM branch nodes directly, and selector `PortID: else` for else-only outputs. Avoid adding Start as a merge dependency solely for a variable reference.
+- Append one HiAgent `End` node whose `InputVariables` read `Group1`, `Group2`, etc. from the `VariableMerge` node.
 
 ## Assigner / Variable Assignment
 
