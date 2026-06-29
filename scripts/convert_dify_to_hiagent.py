@@ -67,10 +67,13 @@ CONDITION_OPERATOR_MAP = {
     "contain": "CONTAINS",
     "not contains": "NOT_CONTAINS",
     "does not contain": "NOT_CONTAINS",
-    "empty": "EMPTY",
-    "is empty": "EMPTY",
-    "not empty": "NOT_EMPTY",
-    "is not empty": "NOT_EMPTY",
+    # HiAgent docs show empty / not-empty in the UI, but observed exports only
+    # accept ConditionOperator strings such as EQ and NE. Represent empty checks
+    # as equality against an empty string to avoid invalid enum values on import.
+    "empty": "EQ",
+    "is empty": "EQ",
+    "not empty": "NE",
+    "is not empty": "NE",
 }
 
 
@@ -382,24 +385,18 @@ def wrap_chatflow_agent(hiagent: dict[str, Any], dify: dict[str, Any], agent_tem
     }
 
 
-def zip_trailing_signature(path: Path | None) -> bytes:
-    if not path or path.suffix.lower() != ".zip" or not path.exists():
-        return b""
+def zip_body_md5(path: Path) -> bytes:
+    """HiAgent app zips append MD5(zip bytes through EOCD) after the EOCD record."""
     data = path.read_bytes()
     eocd = data.rfind(b"PK\x05\x06")
     if eocd < 0 or eocd + 22 > len(data):
-        return b""
+        return hashlib.md5(data).hexdigest().encode("ascii")
     comment_len = struct.unpack_from("<H", data, eocd + 20)[0]
-    start = eocd + 22 + comment_len
-    return data[start:]
+    end = eocd + 22 + comment_len
+    return hashlib.md5(data[:end]).hexdigest().encode("ascii")
 
 
-def default_zip_trailing_signature(agent: dict[str, Any]) -> bytes:
-    seed = (agent.get("UniqueName") or agent.get("DisplayName") or "dify2hiagent").encode("utf-8")
-    return hashlib.md5(seed).hexdigest().encode("ascii")
-
-
-def write_chatflow_zip(path: Path, agent: dict[str, Any], trailing_signature: bytes = b"") -> None:
+def write_chatflow_zip(path: Path, agent: dict[str, Any]) -> None:
     app_name = agent.get("DisplayName") or "Dify 转换对话型工作流"
     index = {
         "DLVersion": "0.0.1",
@@ -412,10 +409,8 @@ def write_chatflow_zip(path: Path, agent: dict[str, Any], trailing_signature: by
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("index.yaml", dump_yaml(index))
         zf.writestr(f"agent/{app_name}.yaml", dump_yaml(agent))
-    signature = trailing_signature or default_zip_trailing_signature(agent)
-    if signature:
-        with path.open("ab") as f:
-            f.write(signature)
+    with path.open("ab") as f:
+        f.write(zip_body_md5(path))
 
 
 def report_workflow(artifact: dict[str, Any]) -> dict[str, Any]:
@@ -700,8 +695,17 @@ def build_condition_node_config(
             left = map_selector(condition.get("variable_selector"), code_map, type_map, start_var_types, conversation_refs, current_node_id)
             left["Name"] = "Left"
             item: dict[str, Any] = {"Left": left, "Operator": operator}
-            if operator in {"EMPTY", "NOT_EMPTY"}:
-                item["Right"] = None
+            if str(condition.get("comparison_operator") or "").strip().lower().replace("_", " ").replace("-", " ") in {
+                "empty",
+                "is empty",
+                "not empty",
+                "is not empty",
+            }:
+                item["Right"] = {
+                    "JsonValue": "\"\"",
+                    "Name": "Right",
+                    "RefType": "value",
+                }
             elif condition.get("value_selector") or condition.get("target_selector"):
                 right = map_selector(condition.get("value_selector") or condition.get("target_selector"), code_map, type_map, start_var_types, conversation_refs, current_node_id)
                 right["Name"] = "Right"
@@ -1537,7 +1541,7 @@ def main() -> None:
     if chatflow:
         if args.output.suffix.lower() != ".zip":
             args.output = args.output.with_suffix(".zip")
-        write_chatflow_zip(args.output, hiagent, zip_trailing_signature(args.agent_template))
+        write_chatflow_zip(args.output, hiagent)
     else:
         args.output.write_text(dump_yaml(hiagent), encoding="utf-8")
     write_report(args.report, hiagent, report)

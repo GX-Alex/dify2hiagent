@@ -27,7 +27,8 @@ Dify apps with `app.mode: advanced-chat` are chatflows. Convert them to HiAgent 
 - Dify `sys.query` maps to the ChatFlow Start `query` field.
 - Dify `answer` nodes become Code nodes that render the answer template and output `output`.
 - Synthetic ChatFlow End should match HiAgent exports: terminal branches write Agent user variable `output` through `VariablesAssign`; End reads `RefType: user_variable`, `Path: output`, `OutputType: Content`, `StreamOutput: true`, `Template: {{output}}`.
-- Use `--agent-template` with a real HiAgent ChatFlow agent zip to reuse wrapper settings such as opening questions, upload config, feedback config, workspace ID, and the 32-byte trailing signature after the zip EOCD record. If no template signature is available, generate a 32-byte hex fallback so HiAgent import does not fail with EOCD/signature errors.
+- Use `--agent-template` with a real HiAgent ChatFlow agent zip to reuse wrapper settings such as opening questions, upload config, feedback config, and workspace ID.
+- After writing the output zip, append the 32-byte lowercase MD5 hex digest of the zip bytes through the EOCD record. Do not copy the template's trailing digest; it is content-bound and HiAgent rejects mismatches with invalid-file errors.
 
 ## Template Transform / Text Processing
 
@@ -47,7 +48,7 @@ Dify `if-else` nodes map to HiAgent `Condition` selector nodes:
 
 - `Configs.Condition.IfBranches[]` uses stable IDs `if01`, `if02`, etc.; `Configs.Condition.ElseBranch.ID` is `else`.
 - Dify edge `sourceHandle` values are translated to downstream `Depends[].PortID`: `true` and the first case ID map to `if01`; later case IDs map to their matching `ifNN`; `false` / `else` maps to `else`.
-- Supported operators map to HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, empty -> `EMPTY`, not empty -> `NOT_EMPTY`, contains -> `CONTAINS`, not contains -> `NOT_CONTAINS`.
+- Supported operators map to observed HiAgent selector operators: equals -> `EQ`, not equals -> `NE`, contains -> `CONTAINS`, not contains -> `NOT_CONTAINS`. Empty checks should be represented as `EQ` with `JsonValue: "\"\""`, and not-empty checks as `NE` with `JsonValue: "\"\""`, because observed HiAgent imports reject `EMPTY` / `NOT_EMPTY` as invalid `ConditionOperator` strings.
 - Constant comparison values are emitted as `Right.RefType: value` with `JsonValue`; variable comparison values are emitted as normal node-field references.
 - Dependency cleanup must preserve `PortID`; otherwise HiAgent imports the selector form but loses branch routing.
 
