@@ -585,6 +585,29 @@ def build_answer_code(template: str, replacements: list[tuple[str, str]]) -> str
     return "\n".join(lines)
 
 
+def build_end_passthrough_code(output_names: list[str]) -> str:
+    lines = [
+        "# Dify 多 End 节点转换：把本分支的结束输出整理为普通节点输出，由唯一 HiAgent End 汇总。",
+        "def _stringify(value):",
+        "    if value is None:",
+        "        return ''",
+        "    if isinstance(value, str):",
+        "        return value",
+        "    return str(value)",
+        "",
+        "def handler(params):",
+        "    result = {}",
+    ]
+    for name in output_names:
+        lines.append(f"    result[{name!r}] = params.get({name!r})")
+    if len(output_names) == 1:
+        lines.append(f"    result['output'] = _stringify(params.get({output_names[0]!r}))")
+    else:
+        lines.append("    result['output'] = result")
+    lines.extend(["    return result", ""])
+    return "\n".join(lines)
+
+
 def assigner_output_names(node: dict[str, Any]) -> set[str]:
     names = set()
     data = node.get("data") or {}
@@ -996,6 +1019,8 @@ def convert(
     code_map = {str(node["id"]): stable_code(str(node["id"])) for node in nodes}
     type_map = {str(node["id"]): node["data"]["type"] for node in nodes}
     branch_ports = condition_port_map(nodes)
+    end_node_count = sum(1 for node in nodes if (node.get("data") or {}).get("type") == "end")
+    collapse_multiple_ends = end_node_count > 1 and not chatflow
     start_node = next((node for node in nodes if node["data"].get("type") == "start"), None)
     if chatflow and start_node:
         code_map["sys"] = code_map[str(start_node["id"])]
@@ -1078,20 +1103,33 @@ def convert(
                 mapped = map_selector(selector, code_map, type_map, start_var_types, conversation_refs, node_id)
                 mapped["Name"] = output.get("variable", "")
                 inputs.append(mapped)
-            hi_node["Type"] = "End"
-            hi_node["Name"] = "End"
-            if chatflow:
-                first = copy.deepcopy(inputs[0]) if inputs else {"Name": "output", "Path": "output", "RefType": "user_variable"}
-                first["Name"] = "output"
-                hi_node["Configs"]["End"] = {
-                    "InputVariables": [first],
-                    "OutputSchema": [{"Name": "content", "Required": True, "Type": 0}],
-                    "OutputType": "Content",
-                    "StreamOutput": True,
-                    "Template": "{{output}}",
+            if collapse_multiple_ends:
+                output_names = [item.get("Name") or f"output_{index + 1}" for index, item in enumerate(inputs)]
+                hi_node["Type"] = "Code"
+                hi_node["Configs"]["Code"] = {
+                    "Code": build_end_passthrough_code(output_names),
+                    "InputVariables": inputs,
+                    "Language": 1,
+                    "OutputSchema": [{"Name": name, "Type": 0} for name in output_names] + [{"Name": "output", "Type": 0}],
+                    "Retries": 0,
+                    "TimeoutSeconds": 120,
                 }
+                report.append(f"Dify 结束节点「{hi_node['Name']}」已转为输出组装 Code 节点；多 End 工作流将追加唯一 HiAgent End。")
             else:
-                hi_node["Configs"]["End"] = {"InputVariables": inputs, "OutputType": "Variable"}
+                hi_node["Type"] = "End"
+                hi_node["Name"] = "End"
+                if chatflow:
+                    first = copy.deepcopy(inputs[0]) if inputs else {"Name": "output", "Path": "output", "RefType": "user_variable"}
+                    first["Name"] = "output"
+                    hi_node["Configs"]["End"] = {
+                        "InputVariables": [first],
+                        "OutputSchema": [{"Name": "content", "Required": True, "Type": 0}],
+                        "OutputType": "Content",
+                        "StreamOutput": True,
+                        "Template": "{{output}}",
+                    }
+                else:
+                    hi_node["Configs"]["End"] = {"InputVariables": inputs, "OutputType": "Variable"}
 
         elif dify_type == "llm":
             params = ((data.get("model") or {}).get("completion_params") or {})

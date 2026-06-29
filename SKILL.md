@@ -83,6 +83,10 @@ Dify `template-transform` nodes should become HiAgent `TextProcessing` nodes wit
 
 Dify `if-else` nodes should become HiAgent `Condition` selector nodes. Convert each Dify case to `Configs.Condition.IfBranches[]` with IDs `if01`, `if02`, etc.; set `ElseBranch.ID` to `else`. When converting downstream edges from an if-else node, preserve the Dify `sourceHandle` as `Depends[].PortID` (`true`/case IDs -> matching `ifNN`, `false`/`else` -> `else`). Preserve these `PortID` fields when rebuilding dependency lists.
 
+## Multiple End Nodes
+
+HiAgent workflow imports require exactly one `Start` node and one `End` node. If a Dify workflow has multiple `end` nodes, convert each Dify end into a Code node that exposes the branch output plus an `output` field, then append one synthetic HiAgent `End` node that references those branch output nodes.
+
 ## Assigner Nodes
 
 Dify `assigner` is a variable assignment node. Convert it to a HiAgent Code node that returns the assigned variable names as outputs, then resolve downstream `conversation.*` references to the nearest upstream assigner output. This preserves normal in-run data flow; cross-turn conversation persistence still needs HiAgent-native review.
